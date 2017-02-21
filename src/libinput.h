@@ -29,13 +29,16 @@
 extern "C" {
 #endif
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <libudev.h>
 
 #define LIBINPUT_ATTRIBUTE_PRINTF(_format, _args) \
 	__attribute__ ((format (printf, _format, _args)))
 #define LIBINPUT_ATTRIBUTE_DEPRECATED __attribute__ ((deprecated))
+
+struct udev;
+struct udev_device;
 
 /**
  * @ingroup base

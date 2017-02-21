@@ -37,6 +37,7 @@
 #include <assert.h>
 #include <time.h>
 #include <math.h>
+#include <libudev.h>
 
 #include "libinput.h"
 #include "evdev.h"
