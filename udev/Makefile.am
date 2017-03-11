@@ -24,6 +24,7 @@ libinput_model_quirks_CFLAGS = \
 			       $(GCC_CFLAGS)
 libinput_model_quirks_LDADD = $(LIBUDEV_LIBS)
 
+if HAVE_UDEV_DIR
 udev_rulesdir=$(UDEV_DIR)/rules.d
 dist_udev_rules_DATA = \
 	80-libinput-device-groups.rules \
@@ -32,6 +33,7 @@ dist_udev_rules_DATA = \
 udev_hwdbdir=$(UDEV_DIR)/hwdb.d
 dist_udev_hwdb_DATA = \
 	90-libinput-model-quirks.hwdb
+endif
 
 %-litest.rules: %.rules.in
 	$(SED) -e "s|\@UDEV_TEST_PATH\@|$(abs_builddir)/|" < $^ > $@

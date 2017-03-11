@@ -1625,14 +1625,12 @@ evdev_tag_touchpad_external(struct evdev_device *device)
 }
 
 static void
-evdev_tag_touchpad(struct evdev_device *device,
-		   struct udev_device *udev_device)
+evdev_tag_touchpad(struct evdev_device *device)
 {
 	int bustype, vendor;
 	const char *prop;
 
-	prop = udev_device_get_property_value(udev_device,
-					      "ID_INPUT_TOUCHPAD_INTEGRATION");
+	prop = NULL;
 	if (prop) {
 		if (streq(prop, "internal")) {
 			evdev_tag_touchpad_internal(device);
@@ -2402,7 +2400,7 @@ evdev_mt_touchpad_create(struct evdev_device *device)
 	struct tp_dispatch *tp;
 	bool want_left_handed = true;
 
-	evdev_tag_touchpad(device, device->udev_device);
+	evdev_tag_touchpad(device);
 
 	tp = zalloc(sizeof *tp);
 	if (!tp)

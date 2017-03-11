@@ -81,7 +81,7 @@ device_added(struct udev_device *udev_device,
 			return -1;
 	}
 
-	device = evdev_device_create(&seat->base, udev_device);
+	device = evdev_device_create(&seat->base, udev_device_get_devnode(udev_device));
 	libinput_seat_unref(&seat->base);
 
 	if (device == EVDEV_UNHANDLED_DEVICE) {

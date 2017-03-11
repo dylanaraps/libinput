@@ -70,7 +70,6 @@ AC_CHECK_DECL(static_assert, [],
 
 PKG_PROG_PKG_CONFIG()
 PKG_CHECK_MODULES(MTDEV, [mtdev >= 1.1.0])
-PKG_CHECK_MODULES(LIBUDEV, [libudev])
 PKG_CHECK_MODULES(LIBEVDEV, [libevdev >= 0.4])
 
 AC_CHECK_LIB([m], [atan2])
@@ -92,12 +91,26 @@ AC_ARG_WITH(udev-dir,
                            [udev base directory [[default=$udev_dir_default]]]),
             [],
             [with_udev_dir="yes"])
-AS_CASE($with_udev_dir,
-	[no|""], [AC_MSG_ERROR([You must define a udev base directory])],
-	[yes], [udevdir="$udev_dir_default"],
-	[udevdir="$with_udev_dir"])
-UDEV_DIR=${udevdir}
-AC_SUBST(UDEV_DIR)
+if test "x$with_udev_dir" != "xno"; then
+	AS_CASE($with_udev_dir,
+		[yes], [udevdir="$udev_dir_default"],
+		[udevdir="$with_udev_dir"])
+	UDEV_DIR=${udevdir}
+	AC_SUBST(UDEV_DIR)
+fi
+
+##################################
+# enable/disable libudev support #
+##################################
+AC_ARG_ENABLE([libudev],
+	      [AC_HELP_STRING([--disable-libudev],
+			      [Disable udev seat])],
+	      [use_libudev="$enableval"],
+	      [use_libudev="yes"])
+if test "x$use_libudev" = "xyes"; then
+	PKG_CHECK_MODULES(LIBUDEV, [libudev])
+	AC_DEFINE(HAVE_LIBUDEV, 1, [Build with libudev])
+fi
 
 ################################
 # enable/disable documentation #
@@ -253,6 +266,10 @@ if test "x$use_libwacom" = "xyes"; then
 	CFLAGS=$OLD_CFLAGS
 fi
 
+AM_CONDITIONAL(HAVE_UDEV_DIR,
+	       [test "x$with_udev_dir" != "xno"])
+AM_CONDITIONAL(HAVE_LIBUDEV,
+	       [test "x$use_libudev" != "xno"])
 AM_CONDITIONAL(HAVE_LIBWACOM_GET_PAIRED_DEVICE,
 	       [test "x$libwacom_have_get_paired_device" == "xyes"])
 AM_CONDITIONAL(HAVE_VALGRIND, [test "x$VALGRIND" != "x"])
@@ -282,6 +299,7 @@ AC_MSG_RESULT([
 	Prefix			${prefix}
 	udev base dir		${UDEV_DIR}
 
+	libudev enabled		${use_libudev}
 	libwacom enabled	${use_libwacom}
 	Build documentation	${build_documentation}
 	Build tests		${build_tests}

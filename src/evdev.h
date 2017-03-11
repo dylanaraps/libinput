@@ -141,7 +141,9 @@ struct evdev_device {
 	struct libevdev *evdev;
 	struct udev_device *udev_device;
 	char *output_name;
+	const char *devnode;
 	const char *devname;
+	const char *sysname;
 	bool was_removed;
 	int fd;
 	enum evdev_device_seat_capability seat_caps;
@@ -334,8 +336,7 @@ struct fallback_dispatch {
 };
 
 struct evdev_device *
-evdev_device_create(struct libinput_seat *seat,
-		    struct udev_device *device);
+evdev_device_create(struct libinput_seat *seat, const char *devnode);
 
 void
 evdev_transform_absolute(struct evdev_device *device,

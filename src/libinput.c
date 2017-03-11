@@ -1723,10 +1723,6 @@ close_restricted(struct libinput *libinput, int fd)
 bool
 ignore_litest_test_suite_device(struct udev_device *device)
 {
-	if (!getenv("LIBINPUT_RUNNING_TEST_SUITE") &&
-	    udev_device_get_property_value(device, "LIBINPUT_TEST_DEVICE"))
-		return true;
-
 	return false;
 }
 
@@ -2799,12 +2795,6 @@ libinput_device_set_seat_logical_name(struct libinput_device *device,
 
 	return libinput->interface_backend->device_change_seat(device,
 							       name);
-}
-
-LIBINPUT_EXPORT struct udev_device *
-libinput_device_get_udev_device(struct libinput_device *device)
-{
-	return evdev_device_get_udev_device((struct evdev_device *)device);
 }
 
 LIBINPUT_EXPORT void

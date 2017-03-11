@@ -28,11 +28,13 @@ libinput_la_SOURCES =			\
 	filter-private.h		\
 	path-seat.h			\
 	path-seat.c			\
-	udev-seat.c			\
-	udev-seat.h			\
 	timer.c				\
 	timer.h				\
 	../include/linux/input.h
+
+if HAVE_LIBUDEV
+libinput_la_SOURCES += udev-seat.c udev-seat.h
+endif
 
 libinput_la_LIBADD = $(MTDEV_LIBS) \
 		     $(LIBUDEV_LIBS) \

@@ -196,8 +196,7 @@ pad_group_new_basic(struct pad_dispatch *pad,
 static inline bool
 is_litest_device(struct evdev_device *device)
 {
-	return !!udev_device_get_property_value(device->udev_device,
-						"LIBINPUT_TEST_DEVICE");
+	return false;
 }
 
 static inline struct pad_led_group *
@@ -250,34 +249,7 @@ pad_led_get_sysfs_base_path(struct evdev_device *device,
 			    char *path_out,
 			    size_t path_out_sz)
 {
-	struct udev_device *parent, *udev_device;
-	const char *test_path;
-	int rc;
-
-	udev_device = device->udev_device;
-
-	/* For testing purposes only allow for a base path set through a
-	 * udev rule. We still expect the normal directory hierarchy inside */
-	test_path = udev_device_get_property_value(udev_device,
-						   "LIBINPUT_TEST_TABLET_PAD_SYSFS_PATH");
-	if (test_path) {
-		rc = snprintf(path_out, path_out_sz, "%s", test_path);
-		return rc != -1;
-	}
-
-	parent = udev_device_get_parent_with_subsystem_devtype(udev_device,
-							       "input",
-							       NULL);
-	if (!parent)
-		return false;
-
-	rc = snprintf(path_out,
-		      path_out_sz,
-		      "%s/%s::wacom-",
-		      udev_device_get_syspath(parent),
-		      udev_device_get_sysname(parent));
-
-	return rc != -1;
+	return false;
 }
 
 #if HAVE_LIBWACOM
@@ -516,7 +488,7 @@ pad_init_leds_from_libwacom(struct pad_dispatch *pad,
 	}
 
 	wacom = libwacom_new_from_path(db,
-				       udev_device_get_devnode(device->udev_device),
+				       device->devnode,
 				       WFALLBACK_NONE,
 				       NULL);
 	if (!wacom)
