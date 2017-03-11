@@ -3,8 +3,7 @@ bin_PROGRAMS = libinput-list-devices libinput-debug-events
 noinst_LTLIBRARIES = libshared.la
 
 AM_CPPFLAGS = -I$(top_srcdir)/include \
-              -I$(top_srcdir)/src \
-              -I$(top_builddir)/src  # for libinput-version.h
+              -I$(top_srcdir)/src
 AM_CFLAGS = $(GCC_CFLAGS)
 AM_CXXFLAGS = $(GCC_CXXFLAGS)
 

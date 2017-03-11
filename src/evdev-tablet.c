@@ -21,7 +21,6 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include "config.h"
-#include "libinput-version.h"
 #include "evdev-tablet.h"
 
 #include <assert.h>

@@ -32,7 +32,6 @@
 
 #include <libinput.h>
 #include <libinput-util.h>
-#include <libinput-version.h>
 
 #include "shared.h"
 
