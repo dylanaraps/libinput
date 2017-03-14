@@ -2700,6 +2700,7 @@ libinput_event_tablet_pad_get_time_usec(struct libinput_event_tablet_pad *event)
  *
  * @see libinput_udev_create_context
  * @see libinput_path_create_context
+ * @see libinput_netlink_create_context
  */
 struct libinput_interface {
 	/**
@@ -2834,6 +2835,47 @@ libinput_path_add_device(struct libinput *libinput,
  */
 void
 libinput_path_remove_device(struct libinput_device *device);
+
+/**
+ * @ingroup base
+ *
+ * Create a new libinput context from netlink. This context is inactive until
+ * assigned a seat ID with libinput_netlink_assign_seat().
+ *
+ * @param interface The callback interface
+ * @param user_data Caller-specific data passed to the various callback
+ * interfaces.
+ *
+ * @return An initialized, but inactive libinput context or NULL on error
+ */
+struct libinput *
+libinput_netlink_create_context(const struct libinput_interface *interface,
+				void *user_data);
+
+/**
+ * @ingroup base
+ *
+ * Assign a seat to this libinput context. New devices or the removal of
+ * existing devices will appear as events during libinput_dispatch().
+ *
+ * libinput_netlink_assign_seat() succeeds even if no input devices are currently
+ * available on this seat, or if devices are available but fail to open in
+ * @ref libinput_interface::open_restricted. Devices that do not have the
+ * minimum capabilities to be recognized as pointer, keyboard or touch
+ * device are ignored. Such devices and those that failed to open
+ * ignored until the next call to libinput_resume().
+ *
+ * This function may only be called once per context.
+ *
+ * @param libinput A libinput context initialized with
+ * libinput_udev_create_context()
+ * @param seat_id A seat identifier. This string must not be NULL.
+ *
+ * @return 0 on success or -1 on failure.
+ */
+int
+libinput_netlink_assign_seat(struct libinput *libinput,
+			     const char *seat_id);
 
 /**
  * @ingroup base

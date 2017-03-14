@@ -26,6 +26,8 @@ libinput_la_SOURCES =			\
 	filter.c			\
 	filter.h			\
 	filter-private.h		\
+	netlink-seat.h			\
+	netlink-seat.c			\
 	path-seat.h			\
 	path-seat.c			\
 	timer.c				\
