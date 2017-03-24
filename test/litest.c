@@ -407,6 +407,9 @@ extern struct litest_test_device litest_calibrated_touchscreen_device;
 extern struct litest_test_device litest_acer_hawaii_keyboard_device;
 extern struct litest_test_device litest_acer_hawaii_touchpad_device;
 extern struct litest_test_device litest_synaptics_rmi4_device;
+extern struct litest_test_device litest_mouse_wheel_tilt_device;
+extern struct litest_test_device litest_lid_switch_device;
+extern struct litest_test_device litest_lid_switch_surface3_device;
 extern struct litest_test_device litest_appletouch_device;
 
 struct litest_test_device* devices[] = {
@@ -469,6 +472,9 @@ struct litest_test_device* devices[] = {
 	&litest_acer_hawaii_keyboard_device,
 	&litest_acer_hawaii_touchpad_device,
 	&litest_synaptics_rmi4_device,
+	&litest_mouse_wheel_tilt_device,
+	&litest_lid_switch_device,
+	&litest_lid_switch_surface3_device,
 	&litest_appletouch_device,
 	NULL,
 };
@@ -572,7 +578,10 @@ litest_add_tcase_no_device(struct suite *suite,
 	t->name = strdup(test_name);
 	t->tc = tcase_create(test_name);
 	list_insert(&suite->tests, &t->node);
-	tcase_add_test(t->tc, func);
+	if (range)
+		tcase_add_loop_test(t->tc, func, range->lower, range->upper);
+	else
+		tcase_add_test(t->tc, func);
 	suite_add_tcase(suite->suite, t->tc);
 }
 
@@ -1199,7 +1208,7 @@ litest_create(enum litest_device_type which,
 	const char *name;
 	const struct input_id *id;
 	struct input_absinfo *abs;
-	int *events;
+	int *events, *e;
 
 	dev = devices;
 	while (*dev) {
@@ -1234,6 +1243,18 @@ litest_create(enum litest_device_type which,
 								 abs,
 								 events);
 	d->interface = (*dev)->interface;
+
+	for (e = events; *e != -1; e += 2) {
+		unsigned int type = *e,
+			     code = *(e + 1);
+
+		if (type == INPUT_PROP_MAX &&
+		    code == INPUT_PROP_SEMI_MT) {
+			d->semi_mt.is_semi_mt = true;
+			break;
+		}
+	}
+
 	free(abs);
 	free(events);
 
@@ -1265,6 +1286,26 @@ void
 litest_restore_log_handler(struct libinput *libinput)
 {
 	libinput_log_set_handler(libinput, litest_log_handler);
+}
+
+LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
+static void
+litest_bug_log_handler(struct libinput *libinput,
+		       enum libinput_log_priority pri,
+		       const char *format,
+		       va_list args)
+{
+	if (strstr(format, "client bug: ") ||
+	    strstr(format, "libinput bug: "))
+		return;
+
+	litest_abort_msg("Expected bug statement in log msg, aborting.\n");
+}
+
+void
+litest_set_log_handler_bug(struct libinput *libinput)
+{
+	libinput_log_set_handler(libinput, litest_bug_log_handler);
 }
 
 struct litest_device *
@@ -1363,6 +1404,8 @@ litest_delete_device(struct litest_device *d)
 {
 	if (!d)
 		return;
+
+	litest_assert_int_eq(d->skip_ev_syn, 0);
 
 	libinput_device_unref(d->libinput_device);
 	libinput_path_remove_device(d->libinput_device);
@@ -1464,12 +1507,13 @@ send_btntool(struct litest_device *d, bool hover)
 }
 
 static void
-litest_slot_start(struct litest_device *d,
-		  unsigned int slot,
-		  double x,
-		  double y,
-		  struct axis_replacement *axes,
-		  bool touching)
+slot_start(struct litest_device *d,
+	   unsigned int slot,
+	   double x,
+	   double y,
+	   struct axis_replacement *axes,
+	   bool touching,
+	   bool filter_abs_xy)
 {
 	struct input_event *ev;
 
@@ -1483,8 +1527,9 @@ litest_slot_start(struct litest_device *d,
 		return;
 	}
 
-	ev = d->interface->touch_down_events;
-	while (ev && (int16_t)ev->type != -1 && (int16_t)ev->code != -1) {
+	for (ev = d->interface->touch_down_events;
+	     ev && (int16_t)ev->type != -1 && (int16_t)ev->code != -1;
+	     ev++) {
 		int value = litest_auto_assign_value(d,
 						     ev,
 						     slot,
@@ -1492,10 +1537,140 @@ litest_slot_start(struct litest_device *d,
 						     y,
 						     axes,
 						     touching);
-		if (value != LITEST_AUTO_ASSIGN)
-			litest_event(d, ev->type, ev->code, value);
-		ev++;
+		if (value == LITEST_AUTO_ASSIGN)
+			continue;
+
+		if (filter_abs_xy && ev->type == EV_ABS &&
+		    (ev->code == ABS_X || ev->code == ABS_Y))
+			continue;
+
+		litest_event(d, ev->type, ev->code, value);
 	}
+}
+
+static void
+slot_move(struct litest_device *d,
+	  unsigned int slot,
+	  double x,
+	  double y,
+	  struct axis_replacement *axes,
+	  bool touching,
+	  bool filter_abs_xy)
+{
+	struct input_event *ev;
+
+	if (d->interface->touch_move) {
+		d->interface->touch_move(d, slot, x, y);
+		return;
+	}
+
+	for (ev = d->interface->touch_move_events;
+	     ev && (int16_t)ev->type != -1 && (int16_t)ev->code != -1;
+	     ev++) {
+		int value = litest_auto_assign_value(d,
+						     ev,
+						     slot,
+						     x,
+						     y,
+						     axes,
+						     touching);
+		if (value == LITEST_AUTO_ASSIGN)
+			continue;
+
+		if (filter_abs_xy && ev->type == EV_ABS &&
+		    (ev->code == ABS_X || ev->code == ABS_Y))
+			continue;
+
+		litest_event(d, ev->type, ev->code, value);
+	}
+}
+
+static void
+touch_up(struct litest_device *d, unsigned int slot)
+{
+	struct input_event *ev;
+	struct input_event up[] = {
+		{ .type = EV_ABS, .code = ABS_MT_SLOT, .value = LITEST_AUTO_ASSIGN },
+		{ .type = EV_ABS, .code = ABS_MT_TRACKING_ID, .value = -1 },
+		{ .type = EV_ABS, .code = ABS_MT_PRESSURE, .value = 0 },
+		{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
+		{ .type = -1, .code = -1 }
+	};
+
+	litest_assert_int_gt(d->ntouches_down, 0);
+	d->ntouches_down--;
+
+	send_btntool(d, false);
+
+	if (d->interface->touch_up) {
+		d->interface->touch_up(d, slot);
+		return;
+	} else if (d->interface->touch_up_events) {
+		ev = d->interface->touch_up_events;
+	} else
+		ev = up;
+
+	for ( /* */;
+	     ev && (int16_t)ev->type != -1 && (int16_t)ev->code != -1;
+	     ev++) {
+		int value = litest_auto_assign_value(d,
+						     ev,
+						     slot,
+						     0,
+						     0,
+						     NULL,
+						     false);
+		litest_event(d, ev->type, ev->code, value);
+	}
+}
+
+static void
+litest_slot_start(struct litest_device *d,
+		  unsigned int slot,
+		  double x,
+		  double y,
+		  struct axis_replacement *axes,
+		  bool touching)
+{
+	double t, l, r = 0, b = 0; /* top, left, right, bottom */
+	bool filter_abs_xy = false;
+
+	if (!d->semi_mt.is_semi_mt) {
+		slot_start(d, slot, x, y, axes, touching, filter_abs_xy);
+		return;
+	}
+
+	if (d->ntouches_down >= 2 || slot > 1)
+		return;
+
+	slot = d->ntouches_down;
+
+	if (d->ntouches_down == 0) {
+		l = x;
+		t = y;
+	} else {
+		int other = (slot + 1) % 2;
+		l = min(x, d->semi_mt.touches[other].x);
+		t = min(y, d->semi_mt.touches[other].y);
+		r = max(x, d->semi_mt.touches[other].x);
+		b = max(y, d->semi_mt.touches[other].y);
+	}
+
+	litest_push_event_frame(d);
+	if (d->ntouches_down == 0)
+		slot_start(d, 0, l, t, axes, touching, filter_abs_xy);
+	else
+		slot_move(d, 0, l, t, axes, touching, filter_abs_xy);
+
+	if (slot == 1) {
+		filter_abs_xy = true;
+		slot_start(d, 1, r, b, axes, touching, filter_abs_xy);
+	}
+
+	litest_pop_event_frame(d);
+
+	d->semi_mt.touches[slot].x = x;
+	d->semi_mt.touches[slot].y = y;
 }
 
 void
@@ -1517,43 +1692,6 @@ litest_touch_down_extended(struct litest_device *d,
 	litest_slot_start(d, slot, x, y, axes, true);
 }
 
-void
-litest_touch_up(struct litest_device *d, unsigned int slot)
-{
-	struct input_event *ev;
-	struct input_event up[] = {
-		{ .type = EV_ABS, .code = ABS_MT_SLOT, .value = LITEST_AUTO_ASSIGN },
-		{ .type = EV_ABS, .code = ABS_MT_TRACKING_ID, .value = -1 },
-		{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
-		{ .type = -1, .code = -1 }
-	};
-
-	litest_assert_int_gt(d->ntouches_down, 0);
-	d->ntouches_down--;
-
-	send_btntool(d, false);
-
-	if (d->interface->touch_up) {
-		d->interface->touch_up(d, slot);
-		return;
-	} else if (d->interface->touch_up_events) {
-		ev = d->interface->touch_up_events;
-	} else
-		ev = up;
-
-	while (ev && (int16_t)ev->type != -1 && (int16_t)ev->code != -1) {
-		int value = litest_auto_assign_value(d,
-						     ev,
-						     slot,
-						     0,
-						     0,
-						     NULL,
-						     false);
-		litest_event(d, ev->type, ev->code, value);
-		ev++;
-	}
-}
-
 static void
 litest_slot_move(struct litest_device *d,
 		 unsigned int slot,
@@ -1562,26 +1700,73 @@ litest_slot_move(struct litest_device *d,
 		 struct axis_replacement *axes,
 		 bool touching)
 {
-	struct input_event *ev;
+	double t, l, r = 0, b = 0; /* top, left, right, bottom */
+	bool filter_abs_xy = false;
 
-	if (d->interface->touch_move) {
-		d->interface->touch_move(d, slot, x, y);
+	if (!d->semi_mt.is_semi_mt) {
+		slot_move(d, slot, x, y, axes, touching, filter_abs_xy);
 		return;
 	}
 
-	ev = d->interface->touch_move_events;
-	while (ev && (int16_t)ev->type != -1 && (int16_t)ev->code != -1) {
-		int value = litest_auto_assign_value(d,
-						     ev,
-						     slot,
-						     x,
-						     y,
-						     axes,
-						     touching);
-		if (value != LITEST_AUTO_ASSIGN)
-			litest_event(d, ev->type, ev->code, value);
-		ev++;
+	if (d->ntouches_down > 2 || slot > 1)
+		return;
+
+	if (d->ntouches_down == 1) {
+		l = x;
+		t = y;
+	} else {
+		int other = (slot + 1) % 2;
+		l = min(x, d->semi_mt.touches[other].x);
+		t = min(y, d->semi_mt.touches[other].y);
+		r = max(x, d->semi_mt.touches[other].x);
+		b = max(y, d->semi_mt.touches[other].y);
 	}
+
+	litest_push_event_frame(d);
+	slot_move(d, 0, l, t, axes, touching, filter_abs_xy);
+
+	if (d->ntouches_down == 2) {
+		filter_abs_xy = true;
+		slot_move(d, 1, r, b, axes, touching, filter_abs_xy);
+	}
+
+	litest_pop_event_frame(d);
+
+	d->semi_mt.touches[slot].x = x;
+	d->semi_mt.touches[slot].y = y;
+}
+
+void
+litest_touch_up(struct litest_device *d, unsigned int slot)
+{
+	if (!d->semi_mt.is_semi_mt) {
+		touch_up(d, slot);
+		return;
+	}
+
+	if (d->ntouches_down > 2 || slot > 1)
+		return;
+
+	litest_push_event_frame(d);
+	touch_up(d, d->ntouches_down - 1);
+
+	/* if we have one finger left, send x/y coords for that finger left.
+	   this is likely to happen with a real touchpad */
+	if (d->ntouches_down == 1) {
+		bool touching = true;
+		bool filter_abs_xy = false;
+
+		int other = (slot + 1) % 2;
+		slot_move(d,
+			  0,
+			  d->semi_mt.touches[other].x,
+			  d->semi_mt.touches[other].y,
+			  NULL,
+			  touching,
+			  filter_abs_xy);
+	}
+
+	litest_pop_event_frame(d);
 }
 
 void
@@ -1621,6 +1806,28 @@ litest_touch_move_to(struct litest_device *d,
 		}
 	}
 	litest_touch_move(d, slot, x_to, y_to);
+}
+
+void
+litest_touch_move_to_extended(struct litest_device *d,
+			      unsigned int slot,
+			      double x_from, double y_from,
+			      double x_to, double y_to,
+			      struct axis_replacement *axes,
+			      int steps, int sleep_ms)
+{
+	for (int i = 1; i < steps - 1; i++) {
+		litest_touch_move_extended(d, slot,
+					   x_from + (x_to - x_from)/steps * i,
+					   y_from + (y_to - y_from)/steps * i,
+					   axes);
+		if (sleep_ms) {
+			libinput_dispatch(d->libinput);
+			msleep(sleep_ms);
+			libinput_dispatch(d->libinput);
+		}
+	}
+	litest_touch_move_extended(d, slot, x_to, y_to, axes);
 }
 
 static int
@@ -1757,7 +1964,13 @@ litest_hover_start(struct litest_device *d,
 		   double x,
 		   double y)
 {
-	litest_slot_start(d, slot, x, y, NULL, 0);
+	struct axis_replacement axes[] = {
+		{ABS_MT_PRESSURE, 0 },
+		{ABS_PRESSURE, 0 },
+		{-1, -1 },
+	};
+
+	litest_slot_start(d, slot, x, y, axes, 0);
 }
 
 void
@@ -1796,7 +2009,13 @@ void
 litest_hover_move(struct litest_device *d, unsigned int slot,
 		  double x, double y)
 {
-	litest_slot_move(d, slot, x, y, NULL, false);
+	struct axis_replacement axes[] = {
+		{ABS_MT_PRESSURE, 0 },
+		{ABS_PRESSURE, 0 },
+		{-1, -1 },
+	};
+
+	litest_slot_move(d, slot, x, y, axes, false);
 }
 
 void
@@ -1885,6 +2104,14 @@ void
 litest_keyboard_key(struct litest_device *d, unsigned int key, bool is_press)
 {
 	litest_button_click(d, key, is_press);
+}
+
+void
+litest_lid_action(struct litest_device *dev,
+		  enum libinput_switch_state state)
+{
+	litest_event(dev, EV_SW, SW_LID, state);
+	litest_event(dev, EV_SYN, SYN_REPORT, 0);
 }
 
 static int
@@ -2183,6 +2410,9 @@ litest_event_type_str(enum libinput_event_type type)
 	case LIBINPUT_EVENT_TABLET_PAD_STRIP:
 		str = "TABLET PAD STRIP";
 		break;
+	case LIBINPUT_EVENT_SWITCH_TOGGLE:
+		str = "SWITCH TOGGLE";
+		break;
 	}
 	return str;
 }
@@ -2388,7 +2618,7 @@ litest_create_uinput(const char *name,
 	   http://cgit.freedesktop.org/libevdev/commit/?id=debe9b030c8069cdf78307888ef3b65830b25122 */
 	if (rc == -EBADF)
 		rc = -EACCES;
-	litest_assert_msg(rc == 0, "Failed to create uinput device: %s", strerror(-rc));
+	litest_assert_msg(rc == 0, "Failed to create uinput device: %s\n", strerror(-rc));
 
 	libevdev_free(dev);
 
@@ -2750,6 +2980,8 @@ litest_is_pad_button_event(struct libinput_event *event,
 
 	litest_assert_int_eq(libinput_event_tablet_pad_get_button_number(p),
 			     button);
+	litest_assert_int_eq(libinput_event_tablet_pad_get_button_state(p),
+			     state);
 
 	return p;
 }
@@ -2792,6 +3024,25 @@ litest_is_pad_strip_event(struct libinput_event *event,
 			     source);
 
 	return p;
+}
+
+struct libinput_event_switch *
+litest_is_switch_event(struct libinput_event *event,
+		       enum libinput_switch sw,
+		       enum libinput_switch_state state)
+{
+	struct libinput_event_switch *swev;
+	enum libinput_event_type type = LIBINPUT_EVENT_SWITCH_TOGGLE;
+
+	litest_assert_notnull(event);
+	litest_assert_event_type(event, type);
+	swev = libinput_event_get_switch_event(event);
+
+	litest_assert_int_eq(libinput_event_switch_get_switch(swev), sw);
+	litest_assert_int_eq(libinput_event_switch_get_switch_state(swev),
+			     state);
+
+	return swev;
 }
 
 void
@@ -2986,16 +3237,37 @@ litest_timeout_trackpoint(void)
 void
 litest_push_event_frame(struct litest_device *dev)
 {
-	litest_assert(!dev->skip_ev_syn);
-	dev->skip_ev_syn = true;
+	litest_assert(dev->skip_ev_syn >= 0);
+	dev->skip_ev_syn++;
 }
 
 void
 litest_pop_event_frame(struct litest_device *dev)
 {
-	litest_assert(dev->skip_ev_syn);
-	dev->skip_ev_syn = false;
-	litest_event(dev, EV_SYN, SYN_REPORT, 0);
+	litest_assert(dev->skip_ev_syn > 0);
+	dev->skip_ev_syn--;
+	if (dev->skip_ev_syn == 0)
+		litest_event(dev, EV_SYN, SYN_REPORT, 0);
+}
+
+void
+litest_filter_event(struct litest_device *dev,
+		    unsigned int type,
+		    unsigned int code)
+{
+	libevdev_disable_event_code(dev->evdev, type, code);
+}
+
+void
+litest_unfilter_event(struct litest_device *dev,
+		      unsigned int type,
+		      unsigned int code)
+{
+	/* would need an non-NULL argument for re-enabling, so simply abort
+	 * until we need to be more sophisticated */
+	litest_assert(type != EV_ABS);
+
+	libevdev_enable_event_code(dev->evdev, type, code, NULL);
 }
 
 static void
@@ -3298,6 +3570,7 @@ main(int argc, char **argv)
 	litest_setup_tests_keyboard();
 	litest_setup_tests_device();
 	litest_setup_tests_gestures();
+	litest_setup_tests_lid();
 
 	if (mode == LITEST_MODE_LIST) {
 		litest_list_tests(&all_tests);

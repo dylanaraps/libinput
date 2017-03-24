@@ -1,5 +1,6 @@
 /*
- * Copyright © 2014 Red Hat, Inc.
+ * Copyright © 2017 James Ye <jye836@gmail.com>
+ * Copyright © 2017 Red Hat, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,49 +22,50 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef TIMER_H
-#define TIMER_H
+#include "config.h"
 
-#include <stdint.h>
+#include "litest.h"
+#include "litest-int.h"
 
-#include "libinput-util.h"
+static void
+litest_lid_switch_setup(void)
+{
+	struct litest_device *d = litest_create_device(LITEST_LID_SWITCH_SURFACE3);
+	litest_set_current_device(d);
+}
 
-struct libinput;
-
-struct libinput_timer {
-	struct libinput *libinput;
-	struct list link;
-	uint64_t expire; /* in absolute us CLOCK_MONOTONIC */
-	void (*timer_func)(uint64_t now, void *timer_func_data);
-	void *timer_func_data;
+static struct input_id input_id = {
+	.bustype = 0x19,
+	.vendor = 0x0,
+	.product = 0x5,
 };
 
-void
-libinput_timer_init(struct libinput_timer *timer, struct libinput *libinput,
-		    void (*timer_func)(uint64_t now, void *timer_func_data),
-		    void *timer_func_data);
-
-/* Set timer expire time, in absolute us CLOCK_MONOTONIC */
-void
-libinput_timer_set(struct libinput_timer *timer, uint64_t expire);
-
-enum timer_flags {
-	TIMER_FLAG_NONE = 0,
-	TIMER_FLAG_ALLOW_NEGATIVE = (1 << 0),
+static int events[] = {
+	EV_SW, SW_LID,
+	-1, -1,
 };
 
-void
-libinput_timer_set_flags(struct libinput_timer *timer,
-			 uint64_t expire,
-			 uint32_t flags);
+static const char udev_rule[] =
+"ACTION==\"remove\", GOTO=\"switch_end\"\n"
+"KERNEL!=\"event*\", GOTO=\"switch_end\"\n"
+"\n"
+"ATTRS{name}==\"litest Lid Switch Surface3*\",\\\n"
+"    ENV{ID_INPUT_SWITCH}=\"1\",\\\n"
+"    ENV{LIBINPUT_ATTR_LID_SWITCH_RELIABILITY}=\"write_open\"\n"
+"\n"
+"LABEL=\"switch_end\"";
 
-void
-libinput_timer_cancel(struct libinput_timer *timer);
+struct litest_test_device litest_lid_switch_surface3_device = {
+	.type = LITEST_LID_SWITCH_SURFACE3,
+	.features = LITEST_SWITCH,
+	.shortname = "lid-switch-surface3",
+	.setup = litest_lid_switch_setup,
+	.interface = NULL,
 
-int
-libinput_timer_subsys_init(struct libinput *libinput);
+	.name = "Lid Switch Surface3",
+	.id = &input_id,
+	.events = events,
+	.absinfo = NULL,
 
-void
-libinput_timer_subsys_destroy(struct libinput *libinput);
-
-#endif
+	.udev_rule = udev_rule,
+};

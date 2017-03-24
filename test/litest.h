@@ -49,6 +49,7 @@ extern void litest_setup_tests_misc(void);
 extern void litest_setup_tests_keyboard(void);
 extern void litest_setup_tests_device(void);
 extern void litest_setup_tests_gestures(void);
+extern void litest_setup_tests_lid(void);
 
 void
 litest_fail_condition(const char *file,
@@ -227,6 +228,9 @@ enum litest_device_type {
 	LITEST_ACER_HAWAII_KEYBOARD,
 	LITEST_ACER_HAWAII_TOUCHPAD,
 	LITEST_SYNAPTICS_RMI4,
+	LITEST_MOUSE_WHEEL_TILT,
+	LITEST_LID_SWITCH,
+	LITEST_LID_SWITCH_SURFACE3,
 	LITEST_APPLETOUCH,
 };
 
@@ -258,6 +262,25 @@ enum litest_device_feature {
 	LITEST_RING = 1 << 22,
 	LITEST_STRIP = 1 << 23,
 	LITEST_TRACKBALL = 1 << 24,
+	LITEST_LEDS = 1 << 25,
+	LITEST_SWITCH = 1 << 26,
+};
+
+/* this is a semi-mt device, so we keep track of the touches that the tests
+ * send and modify them so that the first touch is always slot 0 and sends
+ * the top-left of the bounding box, the second is always slot 1 and sends
+ * the bottom-right of the bounding box.
+ * Lifting any of two fingers terminates slot 1
+ */
+struct litest_semi_mt {
+	bool is_semi_mt;
+
+	int tracking_id;
+	/* The actual touches requested by the test for the two slots
+	 * in the 0..100 range used by litest */
+	struct {
+		double x, y;
+	} touches[2];
 };
 
 struct litest_device {
@@ -269,7 +292,8 @@ struct litest_device {
 	struct litest_device_interface *interface;
 
 	int ntouches_down;
-	bool skip_ev_syn;
+	int skip_ev_syn;
+	struct litest_semi_mt semi_mt; /** only used for semi-mt device */
 
 	void *private; /* device-specific data */
 };
@@ -307,6 +331,7 @@ struct range {
 struct libinput *litest_create_context(void);
 void litest_disable_log_handler(struct libinput *libinput);
 void litest_restore_log_handler(struct libinput *libinput);
+void litest_set_log_handler_bug(struct libinput *libinput);
 
 #define litest_add(name_, func_, ...) \
 	_litest_add(name_, #func_, func_, __VA_ARGS__)
@@ -436,6 +461,14 @@ litest_touch_move_to(struct litest_device *d,
 		     int steps, int sleep_ms);
 
 void
+litest_touch_move_to_extended(struct litest_device *d,
+			      unsigned int slot,
+			      double x_from, double y_from,
+			      double x_to, double y_to,
+			      struct axis_replacement *axes,
+			      int steps, int sleep_ms);
+
+void
 litest_touch_move_two_touches(struct litest_device *d,
 			      double x0, double y0,
 			      double x1, double y1,
@@ -524,6 +557,9 @@ litest_keyboard_key(struct litest_device *d,
 		    unsigned int key,
 		    bool is_press);
 
+void litest_lid_action(struct litest_device *d,
+		       enum libinput_switch_state state);
+
 void
 litest_wait_for_event(struct libinput *li);
 
@@ -586,6 +622,11 @@ struct libinput_event_tablet_pad *
 litest_is_pad_strip_event(struct libinput_event *event,
 			  unsigned int number,
 			  enum libinput_tablet_pad_strip_axis_source source);
+
+struct libinput_event_switch *
+litest_is_switch_event(struct libinput_event *event,
+		       enum libinput_switch sw,
+		       enum libinput_switch_state state);
 
 void
 litest_assert_button_event(struct libinput *li,
@@ -667,21 +708,15 @@ litest_push_event_frame(struct litest_device *dev);
 void
 litest_pop_event_frame(struct litest_device *dev);
 
-/* this is a semi-mt device, so we keep track of the touches that the tests
- * send and modify them so that the first touch is always slot 0 and sends
- * the top-left of the bounding box, the second is always slot 1 and sends
- * the bottom-right of the bounding box.
- * Lifting any of two fingers terminates slot 1
- */
-struct litest_semi_mt {
-	int tracking_id;
-	/* The actual touches requested by the test for the two slots
-	 * in the 0..100 range used by litest */
-	struct {
-		double x, y;
-	} touches[2];
-};
+void
+litest_filter_event(struct litest_device *dev,
+		    unsigned int type,
+		    unsigned int code);
 
+void
+litest_unfilter_event(struct litest_device *dev,
+		      unsigned int type,
+		      unsigned int code);
 void
 litest_semi_mt_touch_down(struct litest_device *d,
 			  struct litest_semi_mt *semi_mt,

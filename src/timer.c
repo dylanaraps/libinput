@@ -63,23 +63,27 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
 	if (r)
-		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
+		log_error(libinput, "timer: timerfd_settime error: %s\n", strerror(errno));
 }
 
 void
-libinput_timer_set(struct libinput_timer *timer, uint64_t expire)
+libinput_timer_set_flags(struct libinput_timer *timer,
+			 uint64_t expire,
+			 uint32_t flags)
 {
 #ifndef NDEBUG
 	uint64_t now = libinput_now(timer->libinput);
-	if (expire < now)
+	if (expire < now) {
+		if ((flags & TIMER_FLAG_ALLOW_NEGATIVE) == 0)
+			log_bug_libinput(timer->libinput,
+					 "timer: offset negative (-%" PRIu64 ")\n",
+					 now - expire);
+	} else if ((expire - now) > ms2us(5000)) {
 		log_bug_libinput(timer->libinput,
-				 "timer offset negative (-%" PRIu64 ")\n",
-				 now - expire);
-	else if ((expire - now) > ms2us(5000))
-		log_bug_libinput(timer->libinput,
-				 "timer offset more than 5s, now %"
+				 "timer: offset more than 5s, now %"
 				 PRIu64 " expire %" PRIu64 "\n",
 				 now, expire);
+	}
 #endif
 
 	assert(expire);
@@ -89,6 +93,12 @@ libinput_timer_set(struct libinput_timer *timer, uint64_t expire)
 
 	timer->expire = expire;
 	libinput_timer_arm_timer_fd(timer->libinput);
+}
+
+void
+libinput_timer_set(struct libinput_timer *timer, uint64_t expire)
+{
+	libinput_timer_set_flags(timer, expire, TIMER_FLAG_NONE);
 }
 
 void
@@ -114,7 +124,7 @@ libinput_timer_handler(void *data)
 	r = read(libinput->timer.fd, &discard, sizeof(discard));
 	if (r == -1 && errno != EAGAIN)
 		log_bug_libinput(libinput,
-				 "Error %d reading from timerfd (%s)",
+				 "timer: error %d reading from timerfd (%s)",
 				 errno,
 				 strerror(errno));
 

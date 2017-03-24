@@ -160,9 +160,9 @@ tablet_process_absolute(struct tablet_dispatch *tablet,
 	case ABS_WHEEL:
 		axis = evcode_to_axis(e->code);
 		if (axis == LIBINPUT_TABLET_TOOL_AXIS_NONE) {
-			log_bug_libinput(tablet_libinput_context(tablet),
-					 "Invalid ABS event code %#x\n",
-					 e->code);
+			evdev_log_bug_libinput(device,
+					       "Invalid ABS event code %#x\n",
+					       e->code);
 			break;
 		}
 
@@ -191,8 +191,9 @@ tablet_process_absolute(struct tablet_dispatch *tablet,
 	   */
 	case ABS_THROTTLE:
 	default:
-		log_info(tablet_libinput_context(tablet),
-			 "Unhandled ABS event code %#x\n", e->code);
+		evdev_log_info(device,
+			       "Unhandled ABS event code %#x\n",
+			       e->code);
 		break;
 	}
 }
@@ -200,8 +201,7 @@ tablet_process_absolute(struct tablet_dispatch *tablet,
 static void
 tablet_change_to_left_handed(struct evdev_device *device)
 {
-	struct tablet_dispatch *tablet =
-		(struct tablet_dispatch*)device->dispatch;
+	struct tablet_dispatch *tablet = tablet_dispatch(device->dispatch);
 
 	if (device->left_handed.enabled == device->left_handed.want_enabled)
 		return;
@@ -597,9 +597,10 @@ tablet_update_button(struct tablet_dispatch *tablet,
 	case BTN_STYLUS2:
 		break;
 	default:
-		log_info(tablet_libinput_context(tablet),
-			 "Unhandled button %s (%#x)\n",
-			 libevdev_event_code_get_name(EV_KEY, evcode), evcode);
+		evdev_log_info(tablet->device,
+			       "Unhandled button %s (%#x)\n",
+			       libevdev_event_code_get_name(EV_KEY, evcode),
+			       evcode);
 		return;
 	}
 
@@ -640,8 +641,8 @@ tablet_process_key(struct tablet_dispatch *tablet,
 {
 	switch (e->code) {
 	case BTN_TOOL_FINGER:
-		log_bug_libinput(tablet_libinput_context(tablet),
-				 "Invalid tool 'finger' on tablet interface\n");
+		evdev_log_bug_libinput(device,
+			       "Invalid tool 'finger' on tablet interface\n");
 		break;
 	case BTN_TOOL_PEN:
 	case BTN_TOOL_RUBBER:
@@ -694,9 +695,9 @@ tablet_process_relative(struct tablet_dispatch *tablet,
 	case REL_WHEEL:
 		axis = rel_evcode_to_axis(e->code);
 		if (axis == LIBINPUT_TABLET_TOOL_AXIS_NONE) {
-			log_bug_libinput(tablet_libinput_context(tablet),
-					 "Invalid ABS event code %#x\n",
-					 e->code);
+			evdev_log_bug_libinput(device,
+					       "Invalid ABS event code %#x\n",
+					       e->code);
 			break;
 		}
 		set_bit(tablet->changed_axes, axis);
@@ -704,10 +705,10 @@ tablet_process_relative(struct tablet_dispatch *tablet,
 		tablet_set_status(tablet, TABLET_AXES_UPDATED);
 		break;
 	default:
-		log_info(tablet_libinput_context(tablet),
-			 "Unhandled relative axis %s (%#x)\n",
-			 libevdev_event_code_get_name(EV_REL, e->code),
-			 e->code);
+		evdev_log_info(device,
+			       "Unhandled relative axis %s (%#x)\n",
+			       libevdev_event_code_get_name(EV_REL, e->code),
+			       e->code);
 		return;
 	}
 }
@@ -727,10 +728,10 @@ tablet_process_misc(struct tablet_dispatch *tablet,
 	case MSC_SCAN:
 		break;
 	default:
-		log_info(tablet_libinput_context(tablet),
-			 "Unhandled MSC event code %s (%#x)\n",
-			 libevdev_event_code_get_name(EV_MSC, e->code),
-			 e->code);
+		evdev_log_info(device,
+			       "Unhandled MSC event code %s (%#x)\n",
+			       libevdev_event_code_get_name(EV_MSC, e->code),
+			       e->code);
 		break;
 	}
 }
@@ -761,7 +762,6 @@ tool_set_bits_from_libwacom(const struct tablet_dispatch *tablet,
 	int rc = 1;
 
 #if HAVE_LIBWACOM
-	struct libinput *libinput = tablet_libinput_context(tablet);
 	WacomDeviceDatabase *db;
 	const WacomStylus *s = NULL;
 	int code;
@@ -770,8 +770,8 @@ tool_set_bits_from_libwacom(const struct tablet_dispatch *tablet,
 
 	db = libwacom_database_new();
 	if (!db) {
-		log_info(libinput,
-			 "Failed to initialize libwacom context.\n");
+		evdev_log_info(tablet->device,
+			       "Failed to initialize libwacom context.\n");
 		goto out;
 	}
 	s = libwacom_stylus_get_for_id(db, tool->tool_id);
@@ -1140,7 +1140,7 @@ detect_pressure_offset(struct tablet_dispatch *tablet,
 		return;
 
 	if (offset > axis_range_percentage(pressure, 20)) {
-		log_error(tablet_libinput_context(tablet),
+		evdev_log_error(device,
 			 "Ignoring pressure offset greater than 20%% detected on tool %s (serial %#x). "
 			 "See http://wayland.freedesktop.org/libinput/doc/%s/tablet-support.html\n",
 			 tablet_tool_type_to_string(tool->type),
@@ -1149,7 +1149,7 @@ detect_pressure_offset(struct tablet_dispatch *tablet,
 		return;
 	}
 
-	log_info(tablet_libinput_context(tablet),
+	evdev_log_info(device,
 		 "Pressure offset detected on tool %s (serial %#x).  "
 		 "See http://wayland.freedesktop.org/libinput/doc/%s/tablet-support.html\n",
 		 tablet_tool_type_to_string(tool->type),
@@ -1172,17 +1172,17 @@ detect_tool_contact(struct tablet_dispatch *tablet,
 
 	/* if we have pressure, always use that for contact, not BTN_TOUCH */
 	if (tablet_has_status(tablet, TABLET_TOOL_ENTERING_CONTACT))
-		log_bug_libinput(tablet_libinput_context(tablet),
-				 "Invalid status: entering contact\n");
+		evdev_log_bug_libinput(device,
+				       "Invalid status: entering contact\n");
 	if (tablet_has_status(tablet, TABLET_TOOL_LEAVING_CONTACT) &&
 	    !tablet_has_status(tablet, TABLET_TOOL_LEAVING_PROXIMITY))
-		log_bug_libinput(tablet_libinput_context(tablet),
-				 "Invalid status: leaving contact\n");
+		evdev_log_bug_libinput(device,
+				       "Invalid status: leaving contact\n");
 
 	p = libevdev_get_abs_info(tablet->device->evdev, ABS_PRESSURE);
 	if (!p) {
-		log_bug_libinput(tablet_libinput_context(tablet),
-				 "Missing pressure axis\n");
+		evdev_log_bug_libinput(device,
+				       "Missing pressure axis\n");
 		return;
 	}
 	pressure = p->value;
@@ -1483,8 +1483,7 @@ tablet_process(struct evdev_dispatch *dispatch,
 	       struct input_event *e,
 	       uint64_t time)
 {
-	struct tablet_dispatch *tablet =
-		(struct tablet_dispatch *)dispatch;
+	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
 
 	switch (e->type) {
 	case EV_ABS:
@@ -1505,10 +1504,10 @@ tablet_process(struct evdev_dispatch *dispatch,
 		tablet_reset_state(tablet);
 		break;
 	default:
-		log_error(tablet_libinput_context(tablet),
-			  "Unexpected event type %s (%#x)\n",
-			  libevdev_event_type_get_name(e->type),
-			  e->type);
+		evdev_log_error(device,
+				"Unexpected event type %s (%#x)\n",
+				libevdev_event_type_get_name(e->type),
+				e->type);
 		break;
 	}
 }
@@ -1517,8 +1516,7 @@ static void
 tablet_suspend(struct evdev_dispatch *dispatch,
 	       struct evdev_device *device)
 {
-	struct tablet_dispatch *tablet =
-		(struct tablet_dispatch *)dispatch;
+	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
 
 	tablet_set_touch_device_enabled(tablet->touch_device, true);
 }
@@ -1526,8 +1524,7 @@ tablet_suspend(struct evdev_dispatch *dispatch,
 static void
 tablet_destroy(struct evdev_dispatch *dispatch)
 {
-	struct tablet_dispatch *tablet =
-		(struct tablet_dispatch*)dispatch;
+	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
 	struct libinput_tablet_tool *tool, *tmp;
 
 	list_for_each_safe(tool, tmp, &tablet->tool_list, link) {
@@ -1541,8 +1538,7 @@ static void
 tablet_device_added(struct evdev_device *device,
 		    struct evdev_device *added_device)
 {
-	struct tablet_dispatch *tablet =
-		(struct tablet_dispatch*)device->dispatch;
+	struct tablet_dispatch *tablet = tablet_dispatch(device->dispatch);
 
 	if (libinput_device_get_device_group(&device->base) !=
 	    libinput_device_get_device_group(&added_device->base))
@@ -1559,8 +1555,7 @@ static void
 tablet_device_removed(struct evdev_device *device,
 		      struct evdev_device *removed_device)
 {
-	struct tablet_dispatch *tablet =
-		(struct tablet_dispatch*)device->dispatch;
+	struct tablet_dispatch *tablet = tablet_dispatch(device->dispatch);
 
 	if (tablet->touch_device == removed_device)
 		tablet->touch_device = NULL;
@@ -1570,10 +1565,10 @@ static void
 tablet_check_initial_proximity(struct evdev_device *device,
 			       struct evdev_dispatch *dispatch)
 {
+	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
 	bool tool_in_prox = false;
 	int code, state;
 	enum libinput_tablet_tool_type tool;
-	struct tablet_dispatch *tablet = (struct tablet_dispatch*)dispatch;
 
 	for (tool = LIBINPUT_TABLET_TOOL_TYPE_PEN; tool <= LIBINPUT_TABLET_TOOL_TYPE_MAX; tool++) {
 		code = tablet_tool_to_evcode(tool);
@@ -1730,10 +1725,9 @@ tablet_reject_device(struct evdev_device *device)
 
 out:
 	if (rc) {
-		log_bug_libinput(evdev_libinput_context(device),
-				 "Device '%s' does not meet tablet criteria. "
-				 "Ignoring this device.\n",
-				 device->devname);
+		evdev_log_bug_libinput(device,
+				       "device does not meet tablet criteria. "
+				       "Ignoring this device.\n");
 	}
 	return rc;
 }
@@ -1745,6 +1739,7 @@ tablet_init(struct tablet_dispatch *tablet,
 	enum libinput_tablet_tool_axis axis;
 	int rc;
 
+	tablet->base.dispatch_type = DISPATCH_TABLET;
 	tablet->base.interface = &tablet_interface;
 	tablet->device = device;
 	tablet->status = TABLET_NONE;

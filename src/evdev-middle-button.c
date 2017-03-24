@@ -82,10 +82,10 @@ static void
 middlebutton_state_error(struct evdev_device *device,
 			 enum evdev_middlebutton_event event)
 {
-	log_bug_libinput(evdev_libinput_context(device),
-			 "Invalid event %s in middle btn state %s\n",
-			 middlebutton_event_to_str(event),
-			 middlebutton_state_to_str(device->middlebutton.state));
+	evdev_log_bug_libinput(device,
+			       "Invalid event %s in middle btn state %s\n",
+			       middlebutton_event_to_str(event),
+			       middlebutton_state_to_str(device->middlebutton.state));
 }
 
 static void
@@ -547,12 +547,12 @@ evdev_middlebutton_handle_event(struct evdev_device *device,
 		break;
 	}
 
-	log_debug(evdev_libinput_context(device),
-		  "middlebuttonstate: %s → %s → %s, rc %d\n",
-		  middlebutton_state_to_str(current),
-		  middlebutton_event_to_str(event),
-		  middlebutton_state_to_str(device->middlebutton.state),
-		  rc);
+	evdev_log_debug(device,
+			"middlebuttonstate: %s → %s → %s, rc %d\n",
+			middlebutton_state_to_str(current),
+			middlebutton_event_to_str(event),
+			middlebutton_state_to_str(device->middlebutton.state),
+			rc);
 
 	return rc;
 }
@@ -609,10 +609,10 @@ evdev_middlebutton_filter_button(struct evdev_device *device,
 
 	if (button < BTN_LEFT ||
 	    bit >= sizeof(device->middlebutton.button_mask) * 8) {
-		log_bug_libinput(evdev_libinput_context(device),
-				 "Button mask too small for %s\n",
-				 libevdev_event_code_get_name(EV_KEY,
-							      button));
+		evdev_log_bug_libinput(device,
+				       "Button mask too small for %s\n",
+				       libevdev_event_code_get_name(EV_KEY,
+								    button));
 		return true;
 	}
 
@@ -638,7 +638,7 @@ evdev_middlebutton_filter_button(struct evdev_device *device,
 static void
 evdev_middlebutton_handle_timeout(uint64_t now, void *data)
 {
-	struct evdev_device *device = (struct evdev_device*)data;
+	struct evdev_device *device = evdev_device(data);
 
 	evdev_middlebutton_handle_event(device, now, MIDDLEBUTTON_EVENT_TIMEOUT);
 }
@@ -653,7 +653,7 @@ static enum libinput_config_status
 evdev_middlebutton_set(struct libinput_device *device,
 		       enum libinput_config_middle_emulation_state enable)
 {
-	struct evdev_device *evdev = (struct evdev_device*)device;
+	struct evdev_device *evdev = evdev_device(device);
 
 	switch (enable) {
 	case LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED:
@@ -674,7 +674,7 @@ evdev_middlebutton_set(struct libinput_device *device,
 enum libinput_config_middle_emulation_state
 evdev_middlebutton_get(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device*)device;
+	struct evdev_device *evdev = evdev_device(device);
 
 	return evdev->middlebutton.want_enabled ?
 			LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED :
@@ -684,7 +684,7 @@ evdev_middlebutton_get(struct libinput_device *device)
 enum libinput_config_middle_emulation_state
 evdev_middlebutton_get_default(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device*)device;
+	struct evdev_device *evdev = evdev_device(device);
 
 	return evdev->middlebutton.enabled_default ?
 			LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED :

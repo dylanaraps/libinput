@@ -5,7 +5,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/include \
               $(LIBEVDEV_CFLAGS) \
               $(LIBUDEV_CFLAGS)
 
-AM_CFLAGS = $(GCC_CFLAGS)
+AM_CFLAGS = $(GCC_CFLAGS) $(GCOV_CFLAGS)
 AM_CXXFLAGS = $(GCC_CXXFLAGS)
 
 TEST_LIBS = liblitest.la $(CHECK_LIBS) $(LIBUDEV_LIBS) $(LIBEVDEV_LIBS) $(top_builddir)/src/libinput.la
@@ -32,10 +32,13 @@ liblitest_la_SOURCES = \
 	litest-device-keyboard.c \
 	litest-device-keyboard-all-codes.c \
 	litest-device-keyboard-razer-blackwidow.c \
+	litest-device-lid-switch.c \
+	litest-device-lid-switch-surface3.c \
 	litest-device-logitech-trackball.c \
 	litest-device-nexus4-touch-screen.c \
 	litest-device-magic-trackpad.c \
 	litest-device-mouse.c \
+	litest-device-mouse-wheel-tilt.c \
 	litest-device-mouse-roccat.c \
 	litest-device-mouse-low-dpi.c \
 	litest-device-mouse-wheel-click-angle.c \
@@ -116,7 +119,8 @@ libinput_test_suite_runner_SOURCES = test-udev.c \
 				     test-misc.c \
 				     test-keyboard.c \
 				     test-device.c \
-				     test-gestures.c
+				     test-gestures.c \
+				     test-lid.c
 
 libinput_test_suite_runner_CFLAGS = $(AM_CFLAGS) -DLIBINPUT_LT_VERSION="\"$(LIBINPUT_LT_VERSION)\""
 libinput_test_suite_runner_LDADD = $(TEST_LIBS)
@@ -163,3 +167,14 @@ DISTCLEANFILES=test-suite-valgrind.log
 endif
 endif
 EXTRA_DIST=valgrind.suppressions
+
+if GCOV_ENABLED
+
+CLEANFILES = gcov-reports/*.gcov gcov-reports/summary.txt *.gcno *.gcda
+
+gcov: generate-gcov-report.sh check-TESTS
+	$(AM_V_GEN)$(srcdir)/generate-gcov-report.sh gcov-reports $(top_builddir)/src $(builddir)
+else
+gcov:
+	@echo "Run ./configure --enable-gcov to produce gcov reports" && false
+endif

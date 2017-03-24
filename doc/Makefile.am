@@ -22,13 +22,15 @@ header_files = \
 	$(srcdir)/reporting-bugs.dox \
 	$(srcdir)/scrolling.dox \
 	$(srcdir)/seats.dox \
+	$(srcdir)/switches.dox \
 	$(srcdir)/t440-support.dox \
 	$(srcdir)/tablet-support.dox \
 	$(srcdir)/tapping.dox \
 	$(srcdir)/test-suite.dox \
 	$(srcdir)/tools.dox \
 	$(srcdir)/touchpad-jumping-cursors.dox \
-	$(srcdir)/touchpads.dox
+	$(srcdir)/touchpads.dox \
+	$(srcdir)/what-is-libinput.dox
 
 diagram_files = \
 	$(srcdir)/dot/seats-sketch.gv \
@@ -68,7 +70,8 @@ style_files = \
 	      style/header.html \
 	      style/footer.html \
 	      style/customdoxygen.css \
-	      style/bootstrap.css
+	      style/bootstrap.css \
+	      style/libinputdoxygen.css
 
 if BUILD_DOCS
 

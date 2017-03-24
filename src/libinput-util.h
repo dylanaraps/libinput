@@ -377,6 +377,24 @@ int parse_mouse_wheel_click_angle_property(const char *prop);
 int parse_mouse_wheel_click_count_property(const char *prop);
 double parse_trackpoint_accel_property(const char *prop);
 bool parse_dimension_property(const char *prop, size_t *width, size_t *height);
+bool parse_calibration_property(const char *prop, float calibration[6]);
+
+enum tpkbcombo_layout {
+	TPKBCOMBO_LAYOUT_UNKNOWN,
+	TPKBCOMBO_LAYOUT_BELOW,
+};
+bool parse_tpkbcombo_layout_poperty(const char *prop,
+				    enum tpkbcombo_layout *layout);
+
+enum switch_reliability {
+	RELIABILITY_UNKNOWN,
+	RELIABILITY_RELIABLE,
+	RELIABILITY_WRITE_OPEN,
+};
+
+bool
+parse_switch_reliability_property(const char *prop,
+				  enum switch_reliability *reliability);
 
 static inline uint64_t
 us(uint64_t us)

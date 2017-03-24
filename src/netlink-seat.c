@@ -55,7 +55,7 @@ device_added(struct netlink_input *input,
 	     const char *devnode)
 {
 	struct evdev_device *device;
-	const char *device_seat, *seat_name;
+	const char *device_seat, *seat_name, *sysname;
 	struct netlink_seat *seat;
 
 	device_seat = default_seat;
@@ -70,14 +70,26 @@ device_added(struct netlink_input *input,
 			return -1;
 	}
 
-	device = evdev_device_create(&seat->base, devnode);
+	sysname = strrchr(devnode, '/');
+	if (sysname)
+		++sysname;
+	else
+		sysname = "";
+
+	device = evdev_device_create(&seat->base, devnode, sysname);
 	libinput_seat_unref(&seat->base);
 
 	if (device == EVDEV_UNHANDLED_DEVICE) {
-		log_info(&input->base, "not using input device '%s'.\n", devnode);
+		log_info(&input->base,
+			 "%-7s - not using input device '%s'\n",
+			 sysname,
+			 devnode);
 		return 0;
 	} else if (device == NULL) {
-		log_info(&input->base, "failed to create input device '%s'.\n", devnode);
+		log_info(&input->base,
+			 "%-7s - failed to create input device '%s'\n",
+			 sysname,
+			 devnode);
 		return 0;
 	}
 
@@ -96,10 +108,6 @@ device_removed(struct netlink_input *input, const char *devnode)
 		list_for_each_safe(device, next,
 				   &seat->base.devices_list, base.link) {
 			if (streq(devnode, device->devnode)) {
-				log_info(&input->base,
-					 "input device %s, %s removed\n",
-					 device->devname,
-					 devnode);
 				evdev_device_remove(device);
 				break;
 			}
@@ -307,11 +315,11 @@ netlink_device_change_seat(struct libinput_device *device,
 {
 	struct libinput *libinput = device->seat->libinput;
 	struct netlink_input *input = (struct netlink_input *)libinput;
-	struct evdev_device *evdev_device = (struct evdev_device *)device;
+	struct evdev_device *evdev = evdev_device(device);
 	char *devnode;
 	int rc;
 
-	devnode = strdup(evdev_device->devnode);
+	devnode = strdup(evdev->devnode);
 	if (!devnode)
 		return -1;
 	device_removed(input, devnode);

@@ -35,7 +35,7 @@
 
 #define DEFAULT_TAP_TIMEOUT_PERIOD ms2us(180)
 #define DEFAULT_DRAG_TIMEOUT_PERIOD ms2us(300)
-#define DEFAULT_TAP_MOVE_THRESHOLD TP_MM_TO_DPI_NORMALIZED(1.3)
+#define DEFAULT_TAP_MOVE_THRESHOLD 1.3 /* mm */
 
 enum tap_event {
 	TAP_EVENT_TOUCH = 12,
@@ -149,8 +149,6 @@ tp_tap_idle_handle_event(struct tp_dispatch *tp,
 			 struct tp_touch *t,
 			 enum tap_event event, uint64_t time)
 {
-	struct libinput *libinput = tp_libinput_context(tp);
-
 	switch (event) {
 	case TAP_EVENT_TOUCH:
 		tp->tap.state = TAP_STATE_TOUCH;
@@ -160,7 +158,7 @@ tp_tap_idle_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_RELEASE:
 		break;
 	case TAP_EVENT_MOTION:
-		log_bug_libinput(libinput,
+		evdev_log_bug_libinput(tp->device,
 				 "invalid tap event, no fingers are down\n");
 		break;
 	case TAP_EVENT_TIMEOUT:
@@ -169,7 +167,7 @@ tp_tap_idle_handle_event(struct tp_dispatch *tp,
 		tp->tap.state = TAP_STATE_DEAD;
 		break;
 	case TAP_EVENT_THUMB:
-		log_bug_libinput(libinput,
+		evdev_log_bug_libinput(tp->device,
 				 "invalid tap event, no fingers down, no thumb\n");
 		break;
 	}
@@ -252,12 +250,10 @@ tp_tap_tapped_handle_event(struct tp_dispatch *tp,
 			   struct tp_touch *t,
 			   enum tap_event event, uint64_t time)
 {
-	struct libinput *libinput = tp_libinput_context(tp);
-
 	switch (event) {
 	case TAP_EVENT_MOTION:
 	case TAP_EVENT_RELEASE:
-		log_bug_libinput(libinput,
+		evdev_log_bug_libinput(tp->device,
 				 "invalid tap event when fingers are up\n");
 		break;
 	case TAP_EVENT_TOUCH:
@@ -565,11 +561,9 @@ tp_tap_multitap_handle_event(struct tp_dispatch *tp,
 			      struct tp_touch *t,
 			      enum tap_event event, uint64_t time)
 {
-	struct libinput *libinput = tp_libinput_context(tp);
-
 	switch (event) {
 	case TAP_EVENT_RELEASE:
-		log_bug_libinput(libinput,
+		evdev_log_bug_libinput(tp->device,
 				 "invalid tap event, no fingers are down\n");
 		break;
 	case TAP_EVENT_TOUCH:
@@ -578,7 +572,7 @@ tp_tap_multitap_handle_event(struct tp_dispatch *tp,
 		tp_tap_set_timer(tp, time);
 		break;
 	case TAP_EVENT_MOTION:
-		log_bug_libinput(libinput,
+		evdev_log_bug_libinput(tp->device,
 				 "invalid tap event, no fingers are down\n");
 		break;
 	case TAP_EVENT_TIMEOUT:
@@ -653,7 +647,6 @@ tp_tap_handle_event(struct tp_dispatch *tp,
 		    enum tap_event event,
 		    uint64_t time)
 {
-	struct libinput *libinput = tp_libinput_context(tp);
 	enum tp_tap_state current;
 
 	current = tp->tap.state;
@@ -715,7 +708,7 @@ tp_tap_handle_event(struct tp_dispatch *tp,
 	if (tp->tap.state == TAP_STATE_IDLE || tp->tap.state == TAP_STATE_DEAD)
 		tp_tap_clear_timer(tp);
 
-	log_debug(libinput,
+	evdev_log_debug(tp->device,
 		  "tap state: %s → %s → %s\n",
 		  tap_state_to_str(current),
 		  tap_event_to_str(event),
@@ -726,11 +719,10 @@ static bool
 tp_tap_exceeds_motion_threshold(struct tp_dispatch *tp,
 				struct tp_touch *t)
 {
-	struct normalized_coords norm =
-		tp_normalize_delta(tp, device_delta(t->point,
-						    t->tap.initial));
+	struct phys_coords mm =
+		tp_phys_delta(tp, device_delta(t->point, t->tap.initial));
 
-	return normalized_length(norm) > DEFAULT_TAP_MOVE_THRESHOLD;
+	return length_in_mm(mm) > DEFAULT_TAP_MOVE_THRESHOLD;
 }
 
 static bool
@@ -767,6 +759,9 @@ tp_tap_handle_state(struct tp_dispatch *tp, uint64_t time)
 		if (t->tap.is_thumb)
 			continue;
 
+		if (t->state == TOUCH_HOVERING)
+			continue;
+
 		if (t->state == TOUCH_BEGIN) {
 			/* The simple version: if a touch is a thumb on
 			 * begin we ignore it. All other thumb touches
@@ -788,7 +783,8 @@ tp_tap_handle_state(struct tp_dispatch *tp, uint64_t time)
 				tp_tap_handle_event(tp, t, TAP_EVENT_MOTION, time);
 
 		} else if (t->state == TOUCH_END) {
-			tp_tap_handle_event(tp, t, TAP_EVENT_RELEASE, time);
+			if (t->was_down)
+				tp_tap_handle_event(tp, t, TAP_EVENT_RELEASE, time);
 			t->tap.state = TAP_TOUCH_STATE_IDLE;
 		} else if (tp->tap.state != TAP_STATE_IDLE &&
 			   tp_tap_exceeds_motion_threshold(tp, t)) {
@@ -890,11 +886,8 @@ tp_tap_enabled_update(struct tp_dispatch *tp, bool suspended, bool enabled, uint
 static int
 tp_tap_config_count(struct libinput_device *device)
 {
-	struct evdev_dispatch *dispatch;
-	struct tp_dispatch *tp = NULL;
-
-	dispatch = ((struct evdev_device *) device)->dispatch;
-	tp = container_of(dispatch, tp, base);
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
 	return min(tp->ntouches, 3U); /* we only do up to 3 finger tap */
 }
@@ -903,10 +896,9 @@ static enum libinput_config_status
 tp_tap_config_set_enabled(struct libinput_device *device,
 			  enum libinput_config_tap_state enabled)
 {
-	struct evdev_dispatch *dispatch = ((struct evdev_device *) device)->dispatch;
-	struct tp_dispatch *tp = NULL;
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
-	tp = container_of(dispatch, tp, base);
 	tp_tap_enabled_update(tp, tp->tap.suspended,
 			      (enabled == LIBINPUT_CONFIG_TAP_ENABLED),
 			      libinput_now(device->seat->libinput));
@@ -917,11 +909,8 @@ tp_tap_config_set_enabled(struct libinput_device *device,
 static enum libinput_config_tap_state
 tp_tap_config_is_enabled(struct libinput_device *device)
 {
-	struct evdev_dispatch *dispatch;
-	struct tp_dispatch *tp = NULL;
-
-	dispatch = ((struct evdev_device *) device)->dispatch;
-	tp = container_of(dispatch, tp, base);
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
 	return tp->tap.enabled ? LIBINPUT_CONFIG_TAP_ENABLED :
 				 LIBINPUT_CONFIG_TAP_DISABLED;
@@ -952,7 +941,7 @@ tp_tap_default(struct evdev_device *evdev)
 static enum libinput_config_tap_state
 tp_tap_config_get_default(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device *)device;
+	struct evdev_device *evdev = evdev_device(device);
 
 	return tp_tap_default(evdev);
 }
@@ -961,10 +950,9 @@ static enum libinput_config_status
 tp_tap_config_set_map(struct libinput_device *device,
 		      enum libinput_config_tap_button_map map)
 {
-	struct evdev_dispatch *dispatch = ((struct evdev_device *) device)->dispatch;
-	struct tp_dispatch *tp = NULL;
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
-	tp = container_of(dispatch, tp, base);
 	tp->tap.want_map = map;
 
 	tp_tap_update_map(tp);
@@ -975,10 +963,8 @@ tp_tap_config_set_map(struct libinput_device *device,
 static enum libinput_config_tap_button_map
 tp_tap_config_get_map(struct libinput_device *device)
 {
-	struct evdev_dispatch *dispatch = ((struct evdev_device *) device)->dispatch;
-	struct tp_dispatch *tp = NULL;
-
-	tp = container_of(dispatch, tp, base);
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
 	return tp->tap.want_map;
 }
@@ -993,10 +979,9 @@ static enum libinput_config_status
 tp_tap_config_set_drag_enabled(struct libinput_device *device,
 			       enum libinput_config_drag_state enabled)
 {
-	struct evdev_dispatch *dispatch = ((struct evdev_device *) device)->dispatch;
-	struct tp_dispatch *tp = NULL;
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
-	tp = container_of(dispatch, tp, base);
 	tp->tap.drag_enabled = enabled;
 
 	return LIBINPUT_CONFIG_STATUS_SUCCESS;
@@ -1005,10 +990,8 @@ tp_tap_config_set_drag_enabled(struct libinput_device *device,
 static enum libinput_config_drag_state
 tp_tap_config_get_drag_enabled(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device *)device;
-	struct tp_dispatch *tp = NULL;
-
-	tp = container_of(evdev->dispatch, tp, base);
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
 	return tp->tap.drag_enabled;
 }
@@ -1022,7 +1005,7 @@ tp_drag_default(struct evdev_device *device)
 static enum libinput_config_drag_state
 tp_tap_config_get_default_drag_enabled(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device *)device;
+	struct evdev_device *evdev = evdev_device(device);
 
 	return tp_drag_default(evdev);
 }
@@ -1031,10 +1014,9 @@ static enum libinput_config_status
 tp_tap_config_set_draglock_enabled(struct libinput_device *device,
 				   enum libinput_config_drag_lock_state enabled)
 {
-	struct evdev_dispatch *dispatch = ((struct evdev_device *) device)->dispatch;
-	struct tp_dispatch *tp = NULL;
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
-	tp = container_of(dispatch, tp, base);
 	tp->tap.drag_lock_enabled = enabled;
 
 	return LIBINPUT_CONFIG_STATUS_SUCCESS;
@@ -1043,10 +1025,8 @@ tp_tap_config_set_draglock_enabled(struct libinput_device *device,
 static enum libinput_config_drag_lock_state
 tp_tap_config_get_draglock_enabled(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device *)device;
-	struct tp_dispatch *tp = NULL;
-
-	tp = container_of(evdev->dispatch, tp, base);
+	struct evdev_dispatch *dispatch = evdev_device(device)->dispatch;
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
 	return tp->tap.drag_lock_enabled;
 }
@@ -1060,7 +1040,7 @@ tp_drag_lock_default(struct evdev_device *device)
 static enum libinput_config_drag_lock_state
 tp_tap_config_get_default_draglock_enabled(struct libinput_device *device)
 {
-	struct evdev_device *evdev = (struct evdev_device *)device;
+	struct evdev_device *evdev = evdev_device(device);
 
 	return tp_drag_lock_default(evdev);
 }

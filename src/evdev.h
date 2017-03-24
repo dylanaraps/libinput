@@ -63,6 +63,7 @@ enum evdev_device_seat_capability {
 	EVDEV_DEVICE_TABLET = (1 << 3),
 	EVDEV_DEVICE_TABLET_PAD = (1 << 4),
 	EVDEV_DEVICE_GESTURE = (1 << 5),
+	EVDEV_DEVICE_SWITCH = (1 << 6),
 };
 
 enum evdev_device_tags {
@@ -71,6 +72,7 @@ enum evdev_device_tags {
 	EVDEV_TAG_EXTERNAL_TOUCHPAD = (1 << 2),
 	EVDEV_TAG_TRACKPOINT = (1 << 3),
 	EVDEV_TAG_KEYBOARD = (1 << 4),
+	EVDEV_TAG_LID_SWITCH = (1 << 5),
 };
 
 enum evdev_middlebutton_state {
@@ -124,6 +126,14 @@ enum evdev_device_model {
 	EVDEV_MODEL_HP_ZBOOK_STUDIO_G3 = (1 << 23),
 	EVDEV_MODEL_HP_PAVILION_DM4_TOUCHPAD = (1 << 24),
 	EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON = (1 << 25),
+	EVDEV_MODEL_LOGITECH_MARBLE_MOUSE = (1 << 26),
+};
+
+enum evdev_button_scroll_state {
+	BUTTONSCROLL_IDLE,
+	BUTTONSCROLL_BUTTON_DOWN,	/* button is down */
+	BUTTONSCROLL_READY,		/* ready for scroll events */
+	BUTTONSCROLL_SCROLLING,		/* have sent scroll events */
 };
 
 struct mt_slot {
@@ -187,8 +197,7 @@ struct evdev_device {
 		uint32_t want_button;
 		/* Checks if buttons are down and commits the setting */
 		void (*change_scroll_method)(struct evdev_device *device);
-		bool button_scroll_active;
-		bool button_scroll_btn_pressed;
+		enum evdev_button_scroll_state button_scroll_state;
 		double threshold;
 		double direction_lock_threshold;
 		uint32_t direction;
@@ -201,6 +210,8 @@ struct evdev_device {
 
 		/* angle per REL_WHEEL click in degrees */
 		struct wheel_angle wheel_click_angle;
+
+		struct wheel_tilt_flags is_tilt;
 	} scroll;
 
 	struct {
@@ -235,6 +246,14 @@ struct evdev_device {
 		uint64_t first_event_time;
 	} middlebutton;
 };
+
+static inline struct evdev_device *
+evdev_device(struct libinput_device *device)
+{
+	struct evdev_device *d;
+
+	return container_of(device, d, base);
+}
 
 #define EVDEV_UNHANDLED_DEVICE ((struct evdev_device *) 1)
 
@@ -283,7 +302,16 @@ struct evdev_dispatch_interface {
 			     bool enable);
 };
 
+enum evdev_dispatch_type {
+	DISPATCH_FALLBACK,
+	DISPATCH_TOUCHPAD,
+	DISPATCH_TABLET,
+	DISPATCH_TABLET_PAD,
+	DISPATCH_LID_SWITCH,
+};
+
 struct evdev_dispatch {
+	enum evdev_dispatch_type dispatch_type;
 	struct evdev_dispatch_interface *interface;
 
 	struct {
@@ -291,6 +319,14 @@ struct evdev_dispatch {
 		enum libinput_config_send_events_mode current_mode;
 	} sendevents;
 };
+
+static inline void
+evdev_verify_dispatch_type(struct evdev_dispatch *dispatch,
+			   enum evdev_dispatch_type type)
+{
+	if (dispatch->dispatch_type != type)
+		abort();
+}
 
 struct fallback_dispatch {
 	struct evdev_dispatch base;
@@ -335,8 +371,18 @@ struct fallback_dispatch {
 	bool ignore_events;
 };
 
+static inline struct fallback_dispatch*
+fallback_dispatch(struct evdev_dispatch *dispatch)
+{
+	struct fallback_dispatch *f;
+
+	evdev_verify_dispatch_type(dispatch, DISPATCH_FALLBACK);
+
+	return container_of(dispatch, f, base);
+}
+
 struct evdev_device *
-evdev_device_create(struct libinput_seat *seat, const char *devnode);
+evdev_device_create(struct libinput_seat *seat, const char *devnode, const char *sysname);
 
 void
 evdev_transform_absolute(struct evdev_device *device,
@@ -354,6 +400,10 @@ void
 evdev_read_calibration_prop(struct evdev_device *device);
 
 void
+evdev_init_sendevents(struct evdev_device *device,
+		      struct evdev_dispatch *dispatch);
+
+void
 evdev_device_init_pointer_acceleration(struct evdev_device *device,
 				       struct motion_filter *filter);
 
@@ -368,6 +418,9 @@ evdev_tablet_create(struct evdev_device *device);
 
 struct evdev_dispatch *
 evdev_tablet_pad_create(struct evdev_device *device);
+
+struct evdev_dispatch *
+evdev_lid_switch_dispatch_create(struct evdev_device *device);
 
 void
 evdev_device_led_update(struct evdev_device *device, enum libinput_led leds);
@@ -596,6 +649,93 @@ evdev_libinput_context(const struct evdev_device *device)
 {
 	return device->base.seat->libinput;
 }
+
+LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
+static inline void
+evdev_log_msg_va(struct evdev_device *device,
+		 enum libinput_log_priority priority,
+		 const char *format,
+		 va_list args)
+{
+	log_msg(evdev_libinput_context(device),
+		priority,
+		"%-7s - ",
+		evdev_device_get_sysname(device));
+
+	/* Anything info and above is user-visible, use the device name */
+	if (priority > LIBINPUT_LOG_PRIORITY_DEBUG)
+		log_msg(evdev_libinput_context(device),
+			priority,
+			"%s: ",
+			device->devname);
+
+	log_msg_va(evdev_libinput_context(device),
+		   priority,
+		   format,
+		   args);
+}
+
+LIBINPUT_ATTRIBUTE_PRINTF(3, 4)
+static inline void
+evdev_log_msg(struct evdev_device *device,
+	      enum libinput_log_priority priority,
+	      const char *format,
+	      ...)
+{
+	va_list args;
+
+	va_start(args, format);
+	evdev_log_msg_va(device, priority, format, args);
+	va_end(args);
+
+}
+
+LIBINPUT_ATTRIBUTE_PRINTF(4, 5)
+static inline void
+evdev_log_msg_ratelimit(struct evdev_device *device,
+			struct ratelimit *ratelimit,
+			enum libinput_log_priority priority,
+			const char *format,
+			...)
+{
+	va_list args;
+	enum ratelimit_state state;
+
+	state = ratelimit_test(ratelimit);
+	if (state == RATELIMIT_EXCEEDED)
+		return;
+
+	va_start(args, format);
+	evdev_log_msg_va(device, priority, format, args);
+	va_end(args);
+
+	if (state == RATELIMIT_THRESHOLD)
+		evdev_log_msg(device,
+			      priority,
+			      "WARNING: log rate limit exceeded (%d msgs per %dms). Discarding future messages.\n",
+			      ratelimit->burst,
+			      us2ms(ratelimit->interval));
+}
+
+#define evdev_log_debug(d_, ...) evdev_log_msg((d_), LIBINPUT_LOG_PRIORITY_DEBUG, __VA_ARGS__)
+#define evdev_log_info(d_, ...) evdev_log_msg((d_), LIBINPUT_LOG_PRIORITY_INFO, __VA_ARGS__)
+#define evdev_log_error(d_, ...) evdev_log_msg((d_), LIBINPUT_LOG_PRIORITY_ERROR, __VA_ARGS__)
+#define evdev_log_bug_kernel(d_, ...) evdev_log_msg((d_), LIBINPUT_LOG_PRIORITY_ERROR, "kernel bug: " __VA_ARGS__)
+#define evdev_log_bug_libinput(d_, ...) evdev_log_msg((d_), LIBINPUT_LOG_PRIORITY_ERROR, "libinput bug: " __VA_ARGS__)
+#define evdev_log_bug_client(d_, ...) evdev_log_msg((d_), LIBINPUT_LOG_PRIORITY_ERROR, "client bug: " __VA_ARGS__)
+
+#define evdev_log_debug_ratelimit(d_, r_, ...) \
+	evdev_log_msg_ratelimit((d_), (r_), LIBINPUT_LOG_PRIORITY_DEBUG, __VA_ARGS__)
+#define evdev_log_info_ratelimit(d_, r_, ...) \
+	evdev_log_msg_ratelimit((d_), (r_), LIBINPUT_LOG_PRIORITY_INFO, __VA_ARGS__)
+#define evdev_log_error_ratelimit(d_, r_, ...) \
+	evdev_log_msg_ratelimit((d_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, __VA_ARGS__)
+#define evdev_log_bug_kernel_ratelimit(d_, r_, ...) \
+	evdev_log_msg_ratelimit((d_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "kernel bug: " __VA_ARGS__)
+#define evdev_log_bug_libinput_ratelimit(d_, r_, ...) \
+	evdev_log_msg_ratelimit((d_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "libinput bug: " __VA_ARGS__)
+#define evdev_log_bug_client_ratelimit(d_, r_, ...) \
+	evdev_log_msg_ratelimit((d_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "client bug: " __VA_ARGS__)
 
 /**
  * Convert the pair of delta coordinates in device space to mm.

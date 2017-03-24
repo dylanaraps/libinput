@@ -98,7 +98,7 @@ struct window {
 		double tilt_x, tilt_y;
 
 		/* these are for the delta coordinates, but they're not
-		 * deltas, the are yconverted into abs positions */
+		 * deltas, they are converted into abs positions */
 		size_t ndeltas;
 		struct point deltas[64];
 	} tool;
@@ -844,6 +844,8 @@ handle_event_libinput(GIOChannel *source, GIOCondition condition, gpointer data)
 		case LIBINPUT_EVENT_TABLET_PAD_BUTTON:
 		case LIBINPUT_EVENT_TABLET_PAD_RING:
 		case LIBINPUT_EVENT_TABLET_PAD_STRIP:
+			break;
+		case LIBINPUT_EVENT_SWITCH_TOGGLE:
 			break;
 		}
 

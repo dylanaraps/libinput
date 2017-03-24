@@ -1,8 +1,8 @@
 AC_PREREQ([2.64])
 
 m4_define([libinput_major_version], [1])
-m4_define([libinput_minor_version], [6])
-m4_define([libinput_micro_version], [3])
+m4_define([libinput_minor_version], [7])
+m4_define([libinput_micro_version], [0])
 m4_define([libinput_version],
           [libinput_major_version.libinput_minor_version.libinput_micro_version])
 
@@ -24,6 +24,7 @@ AC_DEFINE([LIBINPUT_VERSION], ["libinput_version"], [libinput version])
 
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
+AC_CONFIG_AUX_DIR([.])
 
 AM_INIT_AUTOMAKE([1.11 foreign no-dist-gzip dist-xz])
 
@@ -36,7 +37,7 @@ AM_INIT_AUTOMAKE([1.11 foreign no-dist-gzip dist-xz])
 # b) If interfaces have been changed or added, but binary compatibility has
 #    been preserved, change to C+1:0:A+1
 # c) If the interface is the same as the previous version, change to C:R+1:A
-LIBINPUT_LT_VERSION=21:5:11
+LIBINPUT_LT_VERSION=22:2:12
 AC_SUBST(LIBINPUT_LT_VERSION)
 
 AM_SILENT_RULES([yes])
@@ -280,6 +281,26 @@ AM_CONDITIONAL(BUILD_DOCS, [test "x$build_documentation" = "xyes"])
 AM_CONDITIONAL(HAVE_LIBUNWIND, [test "x$HAVE_LIBUNWIND" = xyes])
 AM_CONDITIONAL(BUILD_EVENTGUI, [test "x$build_eventgui" = "xyes"])
 
+#######################
+# enable/disable gcov #
+#######################
+
+AC_ARG_ENABLE([gcov],
+              [AS_HELP_STRING([--enable-gcov],
+                              [Enable to enable coverage testing (default:disabled)])],
+	      [enable_gcov="$enableval"],
+              [enable_gcov=no])
+if test "x$enable_gcov" != "xno"; then
+       GCOV_CFLAGS="-fprofile-arcs -ftest-coverage"
+       GCOV_LDFLAGS="-fprofile-arcs -ftest-coverage"
+       enable_gcov=yes
+fi
+
+AM_CONDITIONAL([GCOV_ENABLED], [test "x$enable_gcov" != "xno"])
+AC_SUBST([GCOV_CFLAGS])
+AC_SUBST([GCOV_LDFLAGS])
+
+
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
 		 doc/libinput.doxygen
@@ -306,4 +327,5 @@ AC_MSG_RESULT([
 	Tests use valgrind	${VALGRIND}
 	Tests use libunwind	${HAVE_LIBUNWIND}
 	Build GUI event tool	${build_eventgui}
+	Enable gcov profiling	${enable_gcov}
 	])

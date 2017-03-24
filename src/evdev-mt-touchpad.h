@@ -153,8 +153,10 @@ struct tp_touch {
 	bool dirty;
 	struct device_coords point;
 	uint64_t millis;
-	int distance;				/* distance == 0 means touch */
 	int pressure;
+
+	bool was_down; /* if distance == 0, false for pure hovering
+			  touches */
 
 	struct {
 		/* A quirk mostly used on Synaptics touchpads. In a
@@ -229,7 +231,6 @@ struct tp_dispatch {
 	unsigned int slot;			/* current slot */
 	bool has_mt;
 	bool semi_mt;
-	bool reports_distance;			/* does the device support true hovering */
 
 	/* true if we're reading events (i.e. not suspended) but we're
 	 * ignoring them */
@@ -244,6 +245,14 @@ struct tp_dispatch {
 	 * ...
 	 */
 	unsigned int fake_touches;
+
+	/* if pressure goes above high -> touch down,
+	   if pressure then goes below low -> touch up */
+	struct {
+		bool use_pressure;
+		int high;
+		int low;
+	} pressure;
 
 	struct device_coords hysteresis_margin;
 
@@ -376,7 +385,22 @@ struct tp_dispatch {
 		 */
 		unsigned int nonmotion_event_count;
 	} quirks;
+
+	struct {
+		struct libinput_event_listener lid_switch_listener;
+		struct evdev_device *lid_switch;
+	} lid_switch;
 };
+
+static inline struct tp_dispatch*
+tp_dispatch(struct evdev_dispatch *dispatch)
+{
+	struct tp_dispatch *tp;
+
+	evdev_verify_dispatch_type(dispatch, DISPATCH_TOUCHPAD);
+
+	return container_of(dispatch, tp, base);
+}
 
 #define tp_for_each_touch(_tp, _t) \
 	for (unsigned int _i = 0; _i < (_tp)->ntouches && (_t = &(_tp)->touches[_i]); _i++)
@@ -397,6 +421,18 @@ tp_normalize_delta(const struct tp_dispatch *tp,
 	normalized.y = delta.y * tp->accel.y_scale_coeff;
 
 	return normalized;
+}
+
+static inline struct phys_coords
+tp_phys_delta(const struct tp_dispatch *tp,
+	      struct device_float_coords delta)
+{
+	struct phys_coords mm;
+
+	mm.x = delta.x / tp->device->abs.absinfo_x->resolution;
+	mm.y = delta.y / tp->device->abs.absinfo_y->resolution;
+
+	return mm;
 }
 
 /**

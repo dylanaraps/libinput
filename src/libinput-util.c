@@ -144,6 +144,9 @@ parse_mouse_dpi_property(const char *prop)
 	bool is_default = false;
 	int nread, dpi = 0, rate;
 
+	if (!prop)
+		return 0;
+
 	while (*prop != 0) {
 		if (*prop == ' ') {
 			prop++;
@@ -190,6 +193,9 @@ parse_mouse_wheel_click_count_property(const char *prop)
 {
 	int count = 0;
 
+	if (!prop)
+		return 0;
+
 	if (!safe_atoi(prop, &count) || abs(count) > 360)
 		return 0;
 
@@ -211,6 +217,9 @@ parse_mouse_wheel_click_angle_property(const char *prop)
 {
 	int angle = 0;
 
+	if (!prop)
+		return 0;
+
 	if (!safe_atoi(prop, &angle) || abs(angle) > 360)
 		return 0;
 
@@ -229,6 +238,9 @@ double
 parse_trackpoint_accel_property(const char *prop)
 {
 	double accel;
+
+	if (!prop)
+		return 0.0;
 
 	if (!safe_atod(prop, &accel))
 		accel = 0.0;
@@ -264,6 +276,87 @@ parse_dimension_property(const char *prop, size_t *w, size_t *h)
 	*w = (size_t)x;
 	*h = (size_t)y;
 	return true;
+}
+
+/**
+ * Parses a set of 6 space-separated floats.
+ *
+ * @param prop The string value of the property
+ * @param calibration Returns the six components
+ * @return true on success, false otherwise
+ */
+bool
+parse_calibration_property(const char *prop, float calibration_out[6])
+{
+	int idx;
+	char **strv;
+	float calibration[6];
+
+	if (!prop)
+		return false;
+
+	strv = strv_from_string(prop, " ");
+	if (!strv)
+		return false;
+
+	for (idx = 0; idx < 6; idx++) {
+		double v;
+		if (strv[idx] == NULL || !safe_atod(strv[idx], &v)) {
+			strv_free(strv);
+			return false;
+		}
+
+		calibration[idx] = v;
+	}
+
+	strv_free(strv);
+
+	memcpy(calibration_out, calibration, sizeof(calibration));
+
+	return true;
+}
+
+bool
+parse_switch_reliability_property(const char *prop,
+				  enum switch_reliability *reliability)
+{
+	if (!prop) {
+		*reliability = RELIABILITY_UNKNOWN;
+		return true;
+	}
+
+	if (streq(prop, "reliable"))
+		*reliability = RELIABILITY_RELIABLE;
+	else if (streq(prop, "write_open"))
+		*reliability = RELIABILITY_WRITE_OPEN;
+	else
+		return false;
+
+	return true;
+}
+
+/**
+ * Parses a string with the allowed values: "below"
+ * The value refers to the position of the touchpad (relative to the
+ * keyboard, i.e. your average laptop would be 'below')
+ *
+ * @param prop The value of the property
+ * @param layout The layout
+ * @return true on success, false otherwise
+ */
+bool
+parse_tpkbcombo_layout_poperty(const char *prop,
+			       enum tpkbcombo_layout *layout)
+{
+	if (!prop)
+		return false;
+
+	if (streq(prop, "below")) {
+		*layout = TPKBCOMBO_LAYOUT_BELOW;
+		return true;
+	}
+
+	return false;
 }
 
 /**
