@@ -1051,9 +1051,24 @@ evdev_tag_trackpoint(struct evdev_device *device)
 		device->tags |= EVDEV_TAG_TRACKPOINT;
 }
 
+static inline void
+evdev_tag_keyboard_internal(struct evdev_device *device)
+{
+	device->tags |= EVDEV_TAG_INTERNAL_KEYBOARD;
+	device->tags &= ~EVDEV_TAG_EXTERNAL_KEYBOARD;
+}
+
+static inline void
+evdev_tag_keyboard_external(struct evdev_device *device)
+{
+	device->tags |= EVDEV_TAG_EXTERNAL_KEYBOARD;
+	device->tags &= ~EVDEV_TAG_INTERNAL_KEYBOARD;
+}
+
 static void
 evdev_tag_keyboard(struct evdev_device *device)
 {
+	const char *prop;
 	int code;
 
 	if (!libevdev_has_event_type(device->evdev, EV_KEY))
@@ -1064,6 +1079,20 @@ evdev_tag_keyboard(struct evdev_device *device)
 					     EV_KEY,
 					     code))
 			return;
+	}
+
+	/* This should eventually become ID_INPUT_KEYBOARD_INTEGRATION */
+	prop = NULL;
+	if (prop) {
+		if (streq(prop, "internal")) {
+			evdev_tag_keyboard_internal(device);
+		} else if (streq(prop, "external")) {
+			evdev_tag_keyboard_external(device);
+		} else {
+			evdev_log_info(device,
+				       "tagged with unknown value %s\n",
+				       prop);
+		}
 	}
 
 	device->tags |= EVDEV_TAG_KEYBOARD;
@@ -1494,9 +1523,18 @@ static uint32_t
 evdev_scroll_get_default_button(struct libinput_device *device)
 {
 	struct evdev_device *evdev = evdev_device(device);
+	unsigned int code;
 
 	if (libevdev_has_event_code(evdev->evdev, EV_KEY, BTN_MIDDLE))
 		return BTN_MIDDLE;
+
+	for (code = BTN_SIDE; code <= BTN_TASK; code++) {
+		if (libevdev_has_event_code(evdev->evdev, EV_KEY, code))
+			return code;
+	}
+
+	if (libevdev_has_event_code(evdev->evdev, EV_KEY, BTN_RIGHT))
+		return BTN_RIGHT;
 
 	return 0;
 }
@@ -1809,7 +1847,7 @@ static inline void
 evdev_process_event(struct evdev_device *device, struct input_event *e)
 {
 	struct evdev_dispatch *dispatch = device->dispatch;
-	uint64_t time = s2us(e->time.tv_sec) + e->time.tv_usec;
+	uint64_t time = tv2us(&e->time);
 
 #if 0
 	if (libevdev_event_is_code(e, EV_SYN, SYN_REPORT))
@@ -2518,7 +2556,7 @@ evdev_configure_device(struct evdev_device *device)
 
 	if (udev_tags & EVDEV_UDEV_TAG_TOUCHPAD) {
 		dispatch = evdev_mt_touchpad_create(device);
-		evdev_log_info(device, "device is a atouchpad\n");
+		evdev_log_info(device, "device is a touchpad\n");
 		return dispatch;
 	}
 
@@ -2712,6 +2750,38 @@ evdev_pre_configure_model_quirks(struct evdev_device *device)
 		libevdev_disable_event_code(device->evdev, EV_KEY, BTN_MIDDLE);
 }
 
+static void
+libevdev_log_func(const struct libevdev *evdev,
+		  enum libevdev_log_priority priority,
+		  void *data,
+		  const char *file,
+		  int line,
+		  const char *func,
+		  const char *format,
+		  va_list args)
+{
+	struct libinput *libinput = data;
+	enum libinput_log_priority pri = LIBEVDEV_LOG_ERROR;
+	const char prefix[] = "libevdev: ";
+	char fmt[strlen(format) + strlen(prefix) + 1];
+
+	switch (priority) {
+	case LIBEVDEV_LOG_ERROR:
+		pri = LIBINPUT_LOG_PRIORITY_ERROR;
+		break;
+	case LIBEVDEV_LOG_INFO:
+		pri = LIBINPUT_LOG_PRIORITY_INFO;
+		break;
+	case LIBEVDEV_LOG_DEBUG:
+		pri = LIBINPUT_LOG_PRIORITY_DEBUG;
+		break;
+	}
+
+	snprintf(fmt, sizeof(fmt), "%s%s", prefix, format);
+
+	log_msg_va(libinput, pri, fmt, args);
+}
+
 struct evdev_device *
 evdev_device_create(struct libinput_seat *seat, const char *devnode, const char *sysname)
 {
@@ -2749,7 +2819,10 @@ evdev_device_create(struct libinput_seat *seat, const char *devnode, const char 
 		goto err;
 
 	libevdev_set_clock_id(device->evdev, CLOCK_MONOTONIC);
-
+	libevdev_set_device_log_function(device->evdev,
+					 libevdev_log_func,
+					 LIBEVDEV_LOG_ERROR,
+					 libinput);
 	device->seat_caps = 0;
 	device->is_mt = 0;
 	device->mtdev = NULL;

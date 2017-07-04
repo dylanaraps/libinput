@@ -30,6 +30,8 @@
 #define LIBINPUT_TOOL_NONE 0
 #define LIBINPUT_TABLET_TOOL_TYPE_MAX LIBINPUT_TABLET_TOOL_TYPE_LENS
 
+#define TABLET_HISTORY_LENGTH 4
+
 enum tablet_status {
 	TABLET_NONE = 0,
 	TABLET_AXES_UPDATED = 1 << 0,
@@ -53,7 +55,14 @@ struct tablet_dispatch {
 	struct evdev_device *device;
 	unsigned int status;
 	unsigned char changed_axes[NCHARS(LIBINPUT_TABLET_TOOL_AXIS_MAX + 1)];
-	struct tablet_axes axes;
+	struct tablet_axes axes; /* for assembling the current state */
+	struct device_coords last_smooth_point;
+	struct {
+		unsigned int index;
+		unsigned int count;
+		struct tablet_axes samples[TABLET_HISTORY_LENGTH];
+	} history;
+
 	unsigned char axis_caps[NCHARS(LIBINPUT_TABLET_TOOL_AXIS_MAX + 1)];
 	int current_value[LIBINPUT_TABLET_TOOL_AXIS_MAX + 1];
 	int prev_value[LIBINPUT_TABLET_TOOL_AXIS_MAX + 1];
@@ -79,11 +88,9 @@ struct tablet_dispatch {
 static inline struct tablet_dispatch*
 tablet_dispatch(struct evdev_dispatch *dispatch)
 {
-	struct tablet_dispatch *t;
-
 	evdev_verify_dispatch_type(dispatch, DISPATCH_TABLET);
 
-	return container_of(dispatch, t, base);
+	return container_of(dispatch, struct tablet_dispatch, base);
 }
 
 static inline enum libinput_tablet_tool_axis

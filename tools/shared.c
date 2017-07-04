@@ -29,42 +29,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <libudev.h>
 
 #include <libevdev/libevdev.h>
 #include <libinput-util.h>
 
 #include "shared.h"
-
-enum options {
-	OPT_DEVICE,
-	OPT_UDEV,
-	OPT_GRAB,
-	OPT_HELP,
-	OPT_VERBOSE,
-	OPT_TAP_ENABLE,
-	OPT_TAP_DISABLE,
-	OPT_TAP_MAP,
-	OPT_DRAG_ENABLE,
-	OPT_DRAG_DISABLE,
-	OPT_DRAG_LOCK_ENABLE,
-	OPT_DRAG_LOCK_DISABLE,
-	OPT_NATURAL_SCROLL_ENABLE,
-	OPT_NATURAL_SCROLL_DISABLE,
-	OPT_LEFT_HANDED_ENABLE,
-	OPT_LEFT_HANDED_DISABLE,
-	OPT_MIDDLEBUTTON_ENABLE,
-	OPT_MIDDLEBUTTON_DISABLE,
-	OPT_DWT_ENABLE,
-	OPT_DWT_DISABLE,
-	OPT_CLICK_METHOD,
-	OPT_SCROLL_METHOD,
-	OPT_SCROLL_BUTTON,
-	OPT_SPEED,
-	OPT_PROFILE,
-	OPT_SHOW_KEYCODES,
-	OPT_QUIET,
-};
 
 LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
 static void
@@ -73,9 +44,6 @@ log_handler(struct libinput *li,
 	    const char *format,
 	    va_list args)
 {
-#define ANSI_HIGHLIGHT "\x1B[0;1;39m"
-#define ANSI_RED "\x1B[0;31m"
-#define ANSI_NORMAL "\x1B[0m"
 	static int is_tty = -1;
 
 	if (is_tty == -1)
@@ -95,54 +63,8 @@ log_handler(struct libinput *li,
 }
 
 void
-tools_usage(void)
+tools_init_options(struct tools_options *options)
 {
-	printf("Usage: %s [options] [--udev [<seat>]|--device /dev/input/event0]\n"
-	       "--udev <seat>.... Use udev device discovery (default).\n"
-	       "		  Specifying a seat ID is optional.\n"
-	       "--device /path/to/device .... open the given device only\n"
-	       "\n"
-	       "Features:\n"
-	       "--enable-tap\n"
-	       "--disable-tap.... enable/disable tapping\n"
-	       "--enable-drag\n"
-	       "--disable-drag.... enable/disable tap-n-drag\n"
-	       "--enable-drag-lock\n"
-	       "--disable-drag-lock.... enable/disable tapping drag lock\n"
-	       "--enable-natural-scrolling\n"
-	       "--disable-natural-scrolling.... enable/disable natural scrolling\n"
-	       "--enable-left-handed\n"
-	       "--disable-left-handed.... enable/disable left-handed button configuration\n"
-	       "--enable-middlebutton\n"
-	       "--disable-middlebutton.... enable/disable middle button emulation\n"
-	       "--enable-dwt\n"
-	       "--disable-dwt..... enable/disable disable-while-typing\n"
-	       "--set-click-method=[none|clickfinger|buttonareas] .... set the desired click method\n"
-	       "--set-scroll-method=[none|twofinger|edge|button] ... set the desired scroll method\n"
-	       "--set-scroll-button=BTN_MIDDLE ... set the button to the given button code\n"
-	       "--set-profile=[adaptive|flat].... set pointer acceleration profile\n"
-	       "--set-speed=<value>.... set pointer acceleration speed (allowed range [-1, 1]) \n"
-	       "--set-tap-map=[lrm|lmr] ... set button mapping for tapping\n"
-	       "--show-keycodes.... show all key codes while typing\n"
-	       "\n"
-	       "These options apply to all applicable devices, if a feature\n"
-	       "is not explicitly specified it is left at each device's default.\n"
-	       "\n"
-	       "Other options:\n"
-	       "--grab .......... Exclusively grab all openend devices\n"
-	       "--verbose ....... Print debugging output.\n"
-	       "--quiet ......... Only print libinput messages, useful in combination with --verbose.\n"
-	       "--help .......... Print this help.\n",
-		program_invocation_short_name);
-}
-
-void
-tools_init_context(struct tools_context *context)
-{
-	struct tools_options *options = &context->options;
-
-	context->user_data = NULL;
-
 	memset(options, 0, sizeof(*options));
 	options->tapping = -1;
 	options->tap_map = -1;
@@ -155,80 +77,16 @@ tools_init_context(struct tools_context *context)
 	options->click_method = -1;
 	options->scroll_method = -1;
 	options->scroll_button = -1;
-	options->backend = BACKEND_UDEV;
-	options->seat = "seat0";
 	options->speed = 0.0;
 	options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_NONE;
-	options->show_keycodes = false;
 }
 
 int
-tools_parse_args(int argc, char **argv, struct tools_context *context)
+tools_parse_option(int option,
+		   const char *optarg,
+		   struct tools_options *options)
 {
-	struct tools_options *options = &context->options;
-
-	while (1) {
-		int c;
-		int option_index = 0;
-		static struct option opts[] = {
-			{ "device", 1, 0, OPT_DEVICE },
-			{ "udev", 0, 0, OPT_UDEV },
-			{ "grab", 0, 0, OPT_GRAB },
-			{ "help", 0, 0, OPT_HELP },
-			{ "verbose", 0, 0, OPT_VERBOSE },
-			{ "quiet", 0, 0, OPT_QUIET },
-			{ "enable-tap", 0, 0, OPT_TAP_ENABLE },
-			{ "disable-tap", 0, 0, OPT_TAP_DISABLE },
-			{ "enable-drag", 0, 0, OPT_DRAG_ENABLE },
-			{ "disable-drag", 0, 0, OPT_DRAG_DISABLE },
-			{ "enable-drag-lock", 0, 0, OPT_DRAG_LOCK_ENABLE },
-			{ "disable-drag-lock", 0, 0, OPT_DRAG_LOCK_DISABLE },
-			{ "enable-natural-scrolling", 0, 0, OPT_NATURAL_SCROLL_ENABLE },
-			{ "disable-natural-scrolling", 0, 0, OPT_NATURAL_SCROLL_DISABLE },
-			{ "enable-left-handed", 0, 0, OPT_LEFT_HANDED_ENABLE },
-			{ "disable-left-handed", 0, 0, OPT_LEFT_HANDED_DISABLE },
-			{ "enable-middlebutton", 0, 0, OPT_MIDDLEBUTTON_ENABLE },
-			{ "disable-middlebutton", 0, 0, OPT_MIDDLEBUTTON_DISABLE },
-			{ "enable-dwt", 0, 0, OPT_DWT_ENABLE },
-			{ "disable-dwt", 0, 0, OPT_DWT_DISABLE },
-			{ "set-click-method", 1, 0, OPT_CLICK_METHOD },
-			{ "set-scroll-method", 1, 0, OPT_SCROLL_METHOD },
-			{ "set-scroll-button", 1, 0, OPT_SCROLL_BUTTON },
-			{ "set-profile", 1, 0, OPT_PROFILE },
-			{ "set-tap-map", 1, 0, OPT_TAP_MAP },
-			{ "set-speed", 1, 0, OPT_SPEED },
-			{ "show-keycodes", 0, 0, OPT_SHOW_KEYCODES },
-			{ 0, 0, 0, 0}
-		};
-
-		c = getopt_long(argc, argv, "h", opts, &option_index);
-		if (c == -1)
-			break;
-
-		switch(c) {
-		case 'h':
-		case OPT_HELP:
-			tools_usage();
-			exit(0);
-		case OPT_DEVICE:
-			options->backend = BACKEND_DEVICE;
-			if (!optarg) {
-				tools_usage();
-				return 1;
-			}
-			options->device = optarg;
-			break;
-		case OPT_UDEV:
-			options->backend = BACKEND_UDEV;
-			if (optarg)
-				options->seat = optarg;
-			break;
-		case OPT_GRAB:
-			options->grab = 1;
-			break;
-		case OPT_VERBOSE:
-			options->verbose = 1;
-			break;
+	switch(option) {
 		case OPT_TAP_ENABLE:
 			options->tapping = 1;
 			break;
@@ -236,16 +94,14 @@ tools_parse_args(int argc, char **argv, struct tools_context *context)
 			options->tapping = 0;
 			break;
 		case OPT_TAP_MAP:
-			if (!optarg) {
-				tools_usage();
+			if (!optarg)
 				return 1;
-			}
+
 			if (streq(optarg, "lrm")) {
 				options->tap_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 			} else if (streq(optarg, "lmr")) {
 				options->tap_map = LIBINPUT_CONFIG_TAP_MAP_LMR;
 			} else {
-				tools_usage();
 				return 1;
 			}
 			break;
@@ -286,10 +142,9 @@ tools_parse_args(int argc, char **argv, struct tools_context *context)
 			options->dwt = LIBINPUT_CONFIG_DWT_DISABLED;
 			break;
 		case OPT_CLICK_METHOD:
-			if (!optarg) {
-				tools_usage();
+			if (!optarg)
 				return 1;
-			}
+
 			if (streq(optarg, "none")) {
 				options->click_method =
 				LIBINPUT_CONFIG_CLICK_METHOD_NONE;
@@ -300,15 +155,13 @@ tools_parse_args(int argc, char **argv, struct tools_context *context)
 				options->click_method =
 				LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
 			} else {
-				tools_usage();
 				return 1;
 			}
 			break;
 		case OPT_SCROLL_METHOD:
-			if (!optarg) {
-				tools_usage();
+			if (!optarg)
 				return 1;
-			}
+
 			if (streq(optarg, "none")) {
 				options->scroll_method =
 				LIBINPUT_CONFIG_SCROLL_NO_SCROLL;
@@ -322,13 +175,11 @@ tools_parse_args(int argc, char **argv, struct tools_context *context)
 				options->scroll_method =
 				LIBINPUT_CONFIG_SCROLL_ON_BUTTON_DOWN;
 			} else {
-				tools_usage();
 				return 1;
 			}
 			break;
 		case OPT_SCROLL_BUTTON:
 			if (!optarg) {
-				tools_usage();
 				return 1;
 			}
 			options->scroll_button =
@@ -342,52 +193,55 @@ tools_parse_args(int argc, char **argv, struct tools_context *context)
 			}
 			break;
 		case OPT_SPEED:
-			if (!optarg) {
-				tools_usage();
+			if (!optarg)
 				return 1;
-			}
 			options->speed = atof(optarg);
 			break;
 		case OPT_PROFILE:
-			if (!optarg) {
-				tools_usage();
+			if (!optarg)
 				return 1;
-			}
-			if (streq(optarg, "adaptive")) {
+
+			if (streq(optarg, "adaptive"))
 				options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE;
-			} else if (streq(optarg, "flat")) {
-				options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
-			} else {
-				tools_usage();
-				return 1;
-			}
+			else if (streq(optarg, "flat"))
+			      options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
+			else
+			      return 1;
 			break;
-		case OPT_SHOW_KEYCODES:
-			options->show_keycodes = true;
-			break;
-		case OPT_QUIET:
-			options->quiet = true;
-			break;
-		default:
-			tools_usage();
-			return 1;
-		}
-
-	}
-
-	if (optind < argc) {
-		tools_usage();
-		return 1;
 	}
 
 	return 0;
 }
 
+static int
+open_restricted(const char *path, int flags, void *user_data)
+{
+	bool *grab = user_data;
+	int fd = open(path, flags);
+
+	if (fd < 0)
+		fprintf(stderr, "Failed to open %s (%s)\n",
+			path, strerror(errno));
+	else if (*grab && ioctl(fd, EVIOCGRAB, (void*)1) == -1)
+		fprintf(stderr, "Grab requested, but failed for %s (%s)\n",
+			path, strerror(errno));
+
+	return fd < 0 ? -errno : fd;
+}
+
+static void
+close_restricted(int fd, void *user_data)
+{
+	close(fd);
+}
+
+static const struct libinput_interface interface = {
+	.open_restricted = open_restricted,
+	.close_restricted = close_restricted,
+};
+
 static struct libinput *
-open_udev(const struct libinput_interface *interface,
-	  void *userdata,
-	  const char *seat,
-	  int verbose)
+tools_open_udev(const char *seat, bool verbose, bool grab)
 {
 	struct libinput *li;
 	struct udev *udev = udev_new();
@@ -397,7 +251,7 @@ open_udev(const struct libinput_interface *interface,
 		return NULL;
 	}
 
-	li = libinput_udev_create_context(interface, userdata, udev);
+	li = libinput_udev_create_context(&interface, &grab, udev);
 	if (!li) {
 		fprintf(stderr, "Failed to initialize context from udev\n");
 		goto out;
@@ -421,15 +275,12 @@ out:
 }
 
 static struct libinput *
-open_device(const struct libinput_interface *interface,
-	    void *userdata,
-	    const char *path,
-	    int verbose)
+tools_open_device(const char *path, bool verbose, bool grab)
 {
 	struct libinput_device *device;
 	struct libinput *li;
 
-	li = libinput_path_create_context(interface, userdata);
+	li = libinput_path_create_context(&interface, &grab);
 	if (!li) {
 		fprintf(stderr, "Failed to initialize context from %s\n", path);
 		return NULL;
@@ -450,46 +301,24 @@ open_device(const struct libinput_interface *interface,
 	return li;
 }
 
-static int
-open_restricted(const char *path, int flags, void *user_data)
-{
-	const struct tools_context *context = user_data;
-	int fd = open(path, flags);
-
-	if (fd < 0)
-		fprintf(stderr, "Failed to open %s (%s)\n",
-			path, strerror(errno));
-	else if (context->options.grab &&
-		 ioctl(fd, EVIOCGRAB, (void*)1) == -1)
-		fprintf(stderr, "Grab requested, but failed for %s (%s)\n",
-			path, strerror(errno));
-
-	return fd < 0 ? -errno : fd;
-}
-
-static void
-close_restricted(int fd, void *user_data)
-{
-	close(fd);
-}
-
-static const struct libinput_interface interface = {
-	.open_restricted = open_restricted,
-	.close_restricted = close_restricted,
-};
-
 struct libinput *
-tools_open_backend(struct tools_context *context)
+tools_open_backend(enum tools_backend which,
+		   const char *seat_or_device,
+		   bool verbose,
+		   bool grab)
 {
-	struct libinput *li = NULL;
-	struct tools_options *options = &context->options;
+	struct libinput *li;
 
-	if (options->backend == BACKEND_UDEV) {
-		li = open_udev(&interface, context, options->seat, options->verbose);
-	} else if (options->backend == BACKEND_DEVICE) {
-		li = open_device(&interface, context, options->device, options->verbose);
-	} else
+	switch (which) {
+	case BACKEND_UDEV:
+		li = tools_open_udev(seat_or_device, verbose, grab);
+		break;
+	case BACKEND_DEVICE:
+		li = tools_open_device(seat_or_device, verbose, grab);
+		break;
+	default:
 		abort();
+	}
 
 	return li;
 }
@@ -538,4 +367,134 @@ tools_device_apply_config(struct libinput_device *device,
 			libinput_device_config_accel_set_profile(device,
 								 options->profile);
 	}
+}
+
+static char*
+find_device(const char *udev_tag)
+{
+	struct udev *udev;
+	struct udev_enumerate *e;
+	struct udev_list_entry *entry;
+	struct udev_device *device;
+	const char *path, *sysname;
+	char *device_node = NULL;
+
+	udev = udev_new();
+	e = udev_enumerate_new(udev);
+	udev_enumerate_add_match_subsystem(e, "input");
+	udev_enumerate_scan_devices(e);
+
+	udev_list_entry_foreach(entry, udev_enumerate_get_list_entry(e)) {
+		path = udev_list_entry_get_name(entry);
+		device = udev_device_new_from_syspath(udev, path);
+		if (!device)
+			continue;
+
+		sysname = udev_device_get_sysname(device);
+		if (strncmp("event", sysname, 5) != 0) {
+			udev_device_unref(device);
+			continue;
+		}
+
+		if (udev_device_get_property_value(device, udev_tag))
+			device_node = strdup(udev_device_get_devnode(device));
+
+		udev_device_unref(device);
+
+		if (device_node)
+			break;
+	}
+	udev_enumerate_unref(e);
+	udev_unref(udev);
+
+	return device_node;
+}
+
+bool
+find_touchpad_device(char *path, size_t path_len)
+{
+	char *devnode = find_device("ID_INPUT_TOUCHPAD");
+
+	if (devnode) {
+		snprintf(path, path_len, "%s", devnode);
+		free(devnode);
+	}
+
+	return devnode != NULL;
+}
+
+bool
+is_touchpad_device(const char *devnode)
+{
+	struct udev *udev;
+	struct udev_device *dev = NULL;
+	struct stat st;
+	bool is_touchpad = false;
+
+	if (stat(devnode, &st) < 0)
+		return false;
+
+	udev = udev_new();
+	dev = udev_device_new_from_devnum(udev, 'c', st.st_rdev);
+	if (!dev)
+		goto out;
+
+	is_touchpad = udev_device_get_property_value(dev, "ID_INPUT_TOUCHPAD");
+out:
+	if (dev)
+		udev_device_unref(dev);
+	udev_unref(udev);
+
+	return is_touchpad;
+}
+
+static inline void
+setup_path(void)
+{
+	const char *path = getenv("PATH");
+	char new_path[PATH_MAX];
+
+	snprintf(new_path,
+		 sizeof(new_path),
+		 "%s:%s",
+		 LIBINPUT_TOOL_PATH,
+		 path ? path : "");
+	setenv("PATH", new_path, 1);
+}
+
+int
+tools_exec_command(const char *prefix, int real_argc, char **real_argv)
+{
+	char *argv[64] = {NULL};
+	char executable[128];
+	const char *command;
+	int rc;
+
+	assert((size_t)real_argc < ARRAY_LENGTH(argv));
+
+	command = real_argv[0];
+
+	rc = snprintf(executable,
+		      sizeof(executable),
+		      "%s-%s",
+		      prefix,
+		      command);
+	if (rc >= (int)sizeof(executable)) {
+		fprintf(stderr, "Failed to assemble command.\n");
+		return EXIT_FAILURE;
+	}
+
+	argv[0] = executable;
+	for (int i = 1; i < real_argc; i++)
+		argv[i] = real_argv[i];
+
+	setup_path();
+
+	rc = execvp(executable, argv);
+	fprintf(stderr,
+		"Failed to execute '%s' (%s)\n",
+		command,
+		strerror(errno));
+
+	return EXIT_FAILURE;
 }

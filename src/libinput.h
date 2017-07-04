@@ -975,6 +975,9 @@ libinput_event_device_notify_get_base_event(struct libinput_event_device_notify 
 /**
  * @ingroup event_keyboard
  *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
+ *
  * @return The event time for this event
  */
 uint32_t
@@ -982,6 +985,9 @@ libinput_event_keyboard_get_time(struct libinput_event_keyboard *event);
 
 /**
  * @ingroup event_keyboard
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @return The event time for this event in microseconds
  */
@@ -1038,6 +1044,9 @@ libinput_event_keyboard_get_seat_key_count(
 /**
  * @ingroup event_pointer
  *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
+ *
  * @return The event time for this event
  */
 uint32_t
@@ -1045,6 +1054,9 @@ libinput_event_pointer_get_time(struct libinput_event_pointer *event);
 
 /**
  * @ingroup event_pointer
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @return The event time for this event in microseconds
  */
@@ -1403,6 +1415,9 @@ libinput_event_pointer_get_base_event(struct libinput_event_pointer *event);
 /**
  * @ingroup event_touch
  *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
+ *
  * @return The event time for this event
  */
 uint32_t
@@ -1410,6 +1425,9 @@ libinput_event_touch_get_time(struct libinput_event_touch *event);
 
 /**
  * @ingroup event_touch
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @return The event time for this event in microseconds
  */
@@ -1567,6 +1585,9 @@ libinput_event_touch_get_base_event(struct libinput_event_touch *event);
 /**
  * @ingroup event_gesture
  *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
+ *
  * @return The event time for this event
  */
 uint32_t
@@ -1574,6 +1595,9 @@ libinput_event_gesture_get_time(struct libinput_event_gesture *event);
 
 /**
  * @ingroup event_gesture
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @return The event time for this event in microseconds
  */
@@ -2303,6 +2327,9 @@ libinput_event_tablet_tool_get_seat_button_count(struct libinput_event_tablet_to
 /**
  * @ingroup event_tablet
  *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
+ *
  * @param event The libinput tablet tool event
  * @return The event time for this event
  */
@@ -2311,6 +2338,9 @@ libinput_event_tablet_tool_get_time(struct libinput_event_tablet_tool *event);
 
 /**
  * @ingroup event_tablet
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @param event The libinput tablet tool event
  * @return The event time for this event in microseconds
@@ -2736,7 +2766,10 @@ struct libinput_tablet_pad_mode_group *
 libinput_event_tablet_pad_get_mode_group(struct libinput_event_tablet_pad *event);
 
 /**
- * @ingroup event_tablet
+ * @ingroup event_tablet_pad
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @param event The libinput tablet pad event
  * @return The event time for this event
@@ -2746,6 +2779,9 @@ libinput_event_tablet_pad_get_time(struct libinput_event_tablet_pad *event);
 
 /**
  * @ingroup event_tablet_pad
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @param event The libinput tablet pad event
  * @return The event time for this event in microseconds
@@ -2802,6 +2838,9 @@ libinput_event_switch_get_base_event(struct libinput_event_switch *event);
 /**
  * @ingroup event_switch
  *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
+ *
  * @param event The libinput switch event
  * @return The event time for this event
  */
@@ -2810,6 +2849,9 @@ libinput_event_switch_get_time(struct libinput_event_switch *event);
 
 /**
  * @ingroup event_switch
+ *
+ * @note Timestamps may not always increase. See @ref event_timestamps for
+ * details.
  *
  * @param event The libinput switch event
  * @return The event time for this event in microseconds
@@ -3535,6 +3577,14 @@ libinput_device_get_id_vendor(struct libinput_device *device);
  * device is mapped to a single output only, a relative device may not move
  * beyond the boundaries of this output. An absolute device has its input
  * coordinates mapped to the extents of this output.
+ *
+ * @note <b>Use of this function is discouraged.</b> Its return value is not
+ * precisely defined and may not be understood by the caller or may be
+ * insufficient to map the device. Instead, the system configuration could
+ * set a udev property the caller understands and interprets correctly. The
+ * caller could then obtain device with libinput_device_get_udev_device()
+ * and query it for this property. For more complex cases, the caller
+ * must implement monitor-to-device association heuristics.
  *
  * @return The name of the output this device is mapped to, or NULL if no
  * output is set

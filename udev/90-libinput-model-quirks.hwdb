@@ -12,6 +12,7 @@
 #	libinput:mouse:<modalias>
 #	libinput:touchpad:<modalias>
 #	libinput:name:<name>:dmi:<dmi string>
+#	libinput:name:<name>:dt:<device-tree string>
 #	libinput:name:<name>:fwversion:<version>
 #
 # Sort by brand, model
@@ -24,6 +25,12 @@
 libinput:name:*Lid Switch*:dmi:*:ct10:*
 libinput:name:*Lid Switch*:dmi:*:ct9:*
  LIBINPUT_ATTR_LID_SWITCH_RELIABILITY=reliable
+
+##########################################
+# Serial keyboards are internal
+##########################################
+libinput:keyboard:input:b0011v*
+ LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
 
 ##########################################
 # ALPS
@@ -45,10 +52,13 @@ libinput:touchpad:input:b0005v05ACp*
  LIBINPUT_ATTR_SIZE_HINT=104x75
 
 libinput:name:*Apple Inc. Apple Internal Keyboard*:dmi:*
- LIBINPUT_MODEL_APPLE_INTERNAL_KEYBOARD=1
+ LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
 
 libinput:mouse:input:b0005v05ACp030D*
  LIBINPUT_MODEL_APPLE_MAGICMOUSE=1
+
+libinput:touchpad:input:b0005v05ACp030E*
+ LIBINPUT_ATTR_SIZE_HINT=130x110
 
 libinput:touchpad:input:b0003v05ACp021A*
  LIBINPUT_MODEL_APPLE_TOUCHPAD_ONEBUTTON=1
@@ -85,7 +95,18 @@ libinput:name:* Touchpad:dmi:*svnDellInc.:*
 ##########################################
 libinput:name:*ETPS/2 Elantech Touchpad*:dmi:*
  LIBINPUT_ATTR_RESOLUTION_HINT=31x31
- LIBINPUT_MODEL_ELANTECH_TOUCHPAD=1
+ LIBINPUT_ATTR_PRESSURE_RANGE=10:8
+
+libinput:name:*ETPS/2 Elantech Touchpad*:dmi:*svnASUSTeKComputerInc.:pnUX21E:*
+ LIBINPUT_ATTR_PRESSURE_RANGE=24:10
+
+libinput:name:*Elan Touchpad*:dt:*
+ LIBINPUT_ATTR_PRESSURE_RANGE=10:8
+
+libinput:name:*Elan Touchpad*:dt:*Chrombook R13*
+libinput:name:*Elan Touchpad*:dt:*CB5-312T*
+libinput:name:*Elan Touchpad*:dt:*Elm*
+ LIBINPUT_ATTR_PRESSURE_RANGE=6:4
 
 ##########################################
 # Google
@@ -110,7 +131,7 @@ libinput:name:Atmel maXTouch Touchpad:dmi:*svn*GOOGLE*:pn*Samus*
  LIBINPUT_MODEL_CHROMEBOOK=1
 
 libinput:name:Cypress APA Trackpad ?cyapa?:dmi:*
- LIBINPUT_MODEL_CYAPA=1
+ LIBINPUT_ATTR_PRESSURE_RANGE=10:8
 
 ##########################################
 # HP
@@ -179,6 +200,10 @@ libinput:mouse:input:b0003v046DpC408*
 # Surface3 needs us to write the open lid switch event
 libinput:name:*Lid Switch*:dmi:*svnMicrosoftCorporation:pnSurface3:*
  LIBINPUT_ATTR_LID_SWITCH_RELIABILITY=write_open
+
+# Surface 3 Type Cover keyboard
+libinput:name:*Microsoft Surface Type Cover Keyboard*:dmi:*svnMicrosoftCorporation:pnSurface3:*
+ LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
 
 ##########################################
 # Synaptics

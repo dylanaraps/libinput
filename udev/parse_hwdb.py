@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # vim: set expandtab shiftwidth=4:
 # -*- Mode: python; coding: utf-8; indent-tabs-mode: nil -*- */
 #
@@ -60,7 +60,7 @@ REAL = Combine((INTEGER + Optional('.' + Optional(INTEGER))) ^ ('.' + INTEGER))
 UDEV_TAG = Word(string.ascii_uppercase, alphanums + '_')
 
 TYPES = {
-         'libinput': ('name', 'touchpad', 'mouse'),
+         'libinput': ('name', 'touchpad', 'mouse', 'keyboard'),
          }
 
 @functools.lru_cache()
@@ -112,7 +112,18 @@ def property_grammar():
                          Suppress('=') -
                          tpkbcombo_tags('VALUE')]
 
-    grammar = Or(model_props + size_props + reliability + tpkbcombo)
+    pressure_range = INTEGER('X') + Suppress(':') + INTEGER('Y')
+    pressure_prop = [ Literal('LIBINPUT_ATTR_PRESSURE_RANGE')('NAME') -
+                      Suppress('=') -
+                      Group(pressure_range('SETTINGS*')) ]
+
+    kbintegration_tags = Or(('internal', 'external'))
+    kbintegration = [Literal('LIBINPUT_ATTR_KEYBOARD_INTEGRATION')('NAME') -
+                         Suppress('=') -
+                         kbintegration_tags('VALUE')]
+
+    grammar = Or(model_props + size_props + reliability + tpkbcombo +
+                 pressure_prop + kbintegration)
 
     return grammar
 

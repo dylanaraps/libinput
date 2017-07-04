@@ -80,4 +80,4 @@ pkgconfig_DATA = libinput.pc
 
 AM_CFLAGS = $(GCC_CFLAGS)
 
-EXTRA_DIST = libinput.sym
+EXTRA_DIST = libinput.sym libinput-restore-selinux-context.sh

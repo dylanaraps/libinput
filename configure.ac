@@ -1,7 +1,7 @@
 AC_PREREQ([2.64])
 
 m4_define([libinput_major_version], [1])
-m4_define([libinput_minor_version], [7])
+m4_define([libinput_minor_version], [8])
 m4_define([libinput_micro_version], [0])
 m4_define([libinput_version],
           [libinput_major_version.libinput_minor_version.libinput_micro_version])
@@ -37,7 +37,7 @@ AM_INIT_AUTOMAKE([1.11 foreign no-dist-gzip dist-xz])
 # b) If interfaces have been changed or added, but binary compatibility has
 #    been preserved, change to C+1:0:A+1
 # c) If the interface is the same as the previous version, change to C:R+1:A
-LIBINPUT_LT_VERSION=22:2:12
+LIBINPUT_LT_VERSION=23:0:13
 AC_SUBST(LIBINPUT_LT_VERSION)
 
 AM_SILENT_RULES([yes])
@@ -47,6 +47,7 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_CC_C99
 AC_PROG_CXX # Only used by build C++ test
 AC_PROG_GREP
+AC_PROG_SED
 
 # Only used for testing the hwdb
 AM_PATH_PYTHON([3.0],, [:])
@@ -56,15 +57,6 @@ AM_CONDITIONAL([HAVE_PYTHON], [test "$PYTHON" != :])
 LT_PREREQ([2.2])
 LT_INIT
 
-AC_CHECK_DECL(EPOLL_CLOEXEC, [],
-	      [AC_MSG_ERROR("EPOLL_CLOEXEC is needed to compile libinput")],
-	      [[#include <sys/epoll.h>]])
-AC_CHECK_DECL(TFD_CLOEXEC,[],
-	      [AC_MSG_ERROR("TFD_CLOEXEC is needed to compile libinput")],
-	      [[#include <sys/timerfd.h>]])
-AC_CHECK_DECL(CLOCK_MONOTONIC,[],
-	      [AC_MSG_ERROR("CLOCK_MONOTONIC is needed to compile libinput")],
-	      [[#include <time.h>]])
 AC_CHECK_DECL(static_assert, [],
 	      [AC_DEFINE(static_assert(...), [/* */], [noop static_assert() replacement]),
               AC_MSG_RESULT([no])],
@@ -72,7 +64,7 @@ AC_CHECK_DECL(static_assert, [],
 
 PKG_PROG_PKG_CONFIG()
 PKG_CHECK_MODULES(MTDEV, [mtdev >= 1.1.0])
-PKG_CHECK_MODULES(LIBEVDEV, [libevdev >= 0.4])
+PKG_CHECK_MODULES(LIBEVDEV, [libevdev >= 1.3])
 
 AC_CHECK_LIB([m], [atan2])
 AC_CHECK_LIB([rt], [clock_gettime])
@@ -119,105 +111,81 @@ fi
 ################################
 AC_ARG_ENABLE([documentation],
 	      [AC_HELP_STRING([--enable-documentation],
-		              [Enable building the documentation (default=auto)])],
+		              [Enable building the documentation (default=yes)])],
 	      [build_documentation="$enableval"],
-	      [build_documentation="auto"])
+	      [build_documentation="yes"])
 
-if test "x$build_documentation" = "xyes" -o "x$build_documentation" = "xauto"; then
+if test "x$build_documentation" = "xyes"; then
 	AC_PATH_PROG(DOXYGEN, doxygen)
 	if test "x$DOXYGEN" = "x"; then
-		if test "x$build_documentation" = "xyes"; then
-			AC_MSG_ERROR([Documentation build requested but doxygen not found. Install doxygen or disable the documentation using --disable-documentation])
-		fi
-	else
-		AC_MSG_CHECKING([for compatible doxygen version])
-		doxygen_version=`$DOXYGEN --version`
-		AS_VERSION_COMPARE([$doxygen_version], [1.6.0],
-		                   [AC_MSG_RESULT([no])
-		                    DOXYGEN=""],
-		                   [AC_MSG_RESULT([yes])],
-		                   [AC_MSG_RESULT([yes])])
-		if test "x$DOXYGEN" = "x" -a "x$build_documentation" = "xyes"; then
-			AC_MSG_ERROR([Doxygen $doxygen_version too old. Doxygen 1.6+ required for documentation build. Install required doxygen version or disable the documentation using --disable-documentation])
-		fi
+		AC_MSG_ERROR([Documentation build requested but doxygen not found. Install doxygen or disable the documentation using --disable-documentation])
+	fi
+
+	AC_MSG_CHECKING([for compatible doxygen version])
+	doxygen_version=`$DOXYGEN --version`
+	AS_VERSION_COMPARE([$doxygen_version], [1.8.3],
+			   [AC_MSG_RESULT([no])
+			    DOXYGEN=""],
+			   [AC_MSG_RESULT([yes])],
+			   [AC_MSG_RESULT([yes])])
+	if test "x$DOXYGEN" = "x"; then
+		AC_MSG_ERROR([Doxygen $doxygen_version too old. Doxygen 1.8.3+ required for documentation build. Install required doxygen version or disable the documentation using --disable-documentation])
 	fi
 
 	AC_PATH_PROG(DOT, dot)
 	if test "x$DOT" = "x"; then
-		if test "x$build_documentation" = "xyes"; then
-			AC_MSG_ERROR([Documentation build requested but graphviz's dot not found. Install graphviz or disable the documentation using --disable-documentation])
-		fi
-	else
-		AC_MSG_CHECKING([for compatible dot version])
-		dot_version=`$DOT -V 2>&1|$GREP -oP '(?<=version\W)@<:@0-9.@:>@*(?=\W(.*))'`
-		AS_VERSION_COMPARE([$dot_version], [2.26.0],
-		                   [AC_MSG_RESULT([no])
-		                    DOT=""],
-		                   [AC_MSG_RESULT([yes])],
-		                   [AC_MSG_RESULT([yes])])
-		if test "x$DOT" = "x" -a "x$build_documentation" = "xyes"; then
-			AC_MSG_ERROR([Graphviz dot $dot_version too old. Graphviz 2.26+ required for documentation build. Install required graphviz version or disable the documentation using --disable-documentation])
-		fi
+		AC_MSG_ERROR([Documentation build requested but graphviz's dot not found. Install graphviz or disable the documentation using --disable-documentation])
 	fi
 
-	if test "x$DOXYGEN" != "x" -a "x$DOT" != "x"; then
-		build_documentation="yes"
-	else
-		build_documentation="no"
+	AC_MSG_CHECKING([for compatible dot version])
+	dot_version=`$DOT -V 2>&1|$GREP -oP '(?<=version\W)@<:@0-9.@:>@*(?=\W(.*))'`
+	AS_VERSION_COMPARE([$dot_version], [2.26.0],
+			   [AC_MSG_RESULT([no])
+			    DOT=""],
+			   [AC_MSG_RESULT([yes])],
+			   [AC_MSG_RESULT([yes])])
+	if test "x$DOT" = "x"; then
+		AC_MSG_ERROR([Graphviz dot $dot_version too old. Graphviz 2.26+ required for documentation build. Install required graphviz version or disable the documentation using --disable-documentation])
 	fi
 fi
 
-###########################################
-# enable/disable event gui debugging tool #
-###########################################
-AC_ARG_ENABLE(event-gui,
-	      AS_HELP_STRING([--enable-event-gui], [Build the GUI event viewer (default=auto)]),
-	      [build_eventgui="$enableval"],
-	      [build_eventgui="auto"])
-PKG_CHECK_EXISTS([cairo glib-2.0 gtk+-3.0], [HAVE_GUILIBS="yes"], [HAVE_GUILIBS="no"])
+########################################
+# enable/disable the debug-gui feature #
+########################################
+AC_ARG_ENABLE(debug-gui,
+	      AS_HELP_STRING([--enable-debug-gui], [Enable the 'debug-gui' feature in the libinput tool (default=yes)]),
+	      [build_debug_gui="$enableval"],
+	      [build_debug_gui="yes"])
 
-if test "x$build_eventgui" = "xauto"; then
-	build_eventgui="$HAVE_GUILIBS"
-fi
-if test "x$build_eventgui" = "xyes"; then
+if test "x$build_debug_gui" = "xyes"; then
 	PKG_CHECK_MODULES(CAIRO, [cairo])
 	PKG_CHECK_MODULES(GTK, [glib-2.0 gtk+-3.0])
+	AC_DEFINE(BUILD_DEBUG_GUI, 1, [Build debug-gui support])
 fi
+
 
 ########################
 # enable/disable tests #
 ########################
 AC_ARG_ENABLE(tests,
-	      AS_HELP_STRING([--enable-tests], [Build the tests (default=auto)]),
+	      AS_HELP_STRING([--enable-tests], [Build the tests (default=yes)]),
 	      [build_tests="$enableval"],
-	      [build_tests="auto"])
+	      [build_tests="yes"])
 
-PKG_CHECK_MODULES(CHECK, [check >= 0.9.10], [HAVE_CHECK="yes"], [HAVE_CHECK="no"])
 
-if test "x$build_tests" = "xauto"; then
-	build_tests="$HAVE_CHECK"
-fi
 if test "x$build_tests" = "xyes"; then
-	if test "x$HAVE_CHECK" = "xno"; then
-		AC_MSG_ERROR([Cannot build tests, check is missing])
-	fi
+	PKG_CHECK_MODULES(CHECK, [check >= 0.9.10])
 
 	AC_PATH_PROG(VALGRIND, [valgrind])
 
 	AC_ARG_WITH(libunwind,
 		    AS_HELP_STRING([--without-libunwind],[Do not use libunwind]))
 
-	AS_IF([test "x$with_libunwind" != "xno"],
-		[PKG_CHECK_MODULES(LIBUNWIND,
-			  [libunwind],
-			  [HAVE_LIBUNWIND=yes],
-			  [HAVE_LIBUNWIND=no])],
-		[HAVE_LIBUNWIND=no])
-
-	AS_IF([test "x$HAVE_LIBUNWIND" = "xyes"],
-		[AC_DEFINE(HAVE_LIBUNWIND, 1, [Have libunwind support])],
-		[AS_IF([test "x$with_libunwind" = "xyes"],
-			[AC_MSG_ERROR([libunwind requested but not found])])])
+	if test "x$with_libunwind" != "xno"; then
+		PKG_CHECK_MODULES(LIBUNWIND, [libunwind])
+		AC_DEFINE(HAVE_LIBUNWIND, 1, [Have libunwind support])
+		HAVE_LIBUNWIND="yes"
+	fi
 
 	AC_PATH_PROG(ADDR2LINE, [addr2line])
 	if test "x$ADDR2LINE" != "x"; then
@@ -274,12 +242,7 @@ AM_CONDITIONAL(HAVE_LIBUDEV,
 	       [test "x$use_libudev" != "xno"])
 AM_CONDITIONAL(HAVE_LIBWACOM_GET_PAIRED_DEVICE,
 	       [test "x$libwacom_have_get_paired_device" == "xyes"])
-AM_CONDITIONAL(HAVE_VALGRIND, [test "x$VALGRIND" != "x"])
-AM_CONDITIONAL(BUILD_TESTS, [test "x$build_tests" = "xyes"])
-AM_CONDITIONAL(RUN_TESTS, [test "x$run_tests" = "xyes"])
-AM_CONDITIONAL(BUILD_DOCS, [test "x$build_documentation" = "xyes"])
-AM_CONDITIONAL(HAVE_LIBUNWIND, [test "x$HAVE_LIBUNWIND" = xyes])
-AM_CONDITIONAL(BUILD_EVENTGUI, [test "x$build_eventgui" = "xyes"])
+
 
 #######################
 # enable/disable gcov #
@@ -300,6 +263,12 @@ AM_CONDITIONAL([GCOV_ENABLED], [test "x$enable_gcov" != "xno"])
 AC_SUBST([GCOV_CFLAGS])
 AC_SUBST([GCOV_LDFLAGS])
 
+AM_CONDITIONAL(HAVE_VALGRIND, [test "x$VALGRIND" != "x"])
+AM_CONDITIONAL(BUILD_TESTS, [test "x$build_tests" = "xyes"])
+AM_CONDITIONAL(RUN_TESTS, [test "x$run_tests" = "xyes"])
+AM_CONDITIONAL(BUILD_DOCS, [test "x$build_documentation" = "xyes"])
+AM_CONDITIONAL(HAVE_LIBUNWIND, [test "x$HAVE_LIBUNWIND" = "xyes"])
+AM_CONDITIONAL(BUILD_DEBUG_GUI, [test "x$build_debug_gui" = "xyes"])
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
@@ -326,6 +295,6 @@ AC_MSG_RESULT([
 	Build tests		${build_tests}
 	Tests use valgrind	${VALGRIND}
 	Tests use libunwind	${HAVE_LIBUNWIND}
-	Build GUI event tool	${build_eventgui}
+	Build GUI event tool	${build_debug_gui}
 	Enable gcov profiling	${enable_gcov}
 	])

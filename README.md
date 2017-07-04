@@ -1,5 +1,3 @@
-/*!@mainpage
-
 libinput
 ========
 
@@ -64,21 +62,19 @@ See @ref reporting_bugs for more info.
 Documentation
 -------------
 
-Developer API documentation:
-http://wayland.freedesktop.org/libinput/doc/latest/modules.html
-
-High-level documentation about libinput's features:
+- Developer API documentation: http://wayland.freedesktop.org/libinput/doc/latest/modules.html
+- High-level documentation about libinput's features:
 http://wayland.freedesktop.org/libinput/doc/latest/pages.html
+- Build instructions:
+http://wayland.freedesktop.org/libinput/doc/latest/building_libinput.html
+- Documentation for previous versions of libinput: https://wayland.freedesktop.org/libinput/doc/
 
 Examples of how to use libinput are the debugging tools in the libinput
 repository. Developers are encouraged to look at those tools for a
 real-world (yet simple) example on how to use libinput.
 
-- A commandline debugging tool: https://cgit.freedesktop.org/wayland/libinput/tree/tools/event-debug.c
-- A GTK application that draws cursor/touch/tablet positions: https://cgit.freedesktop.org/wayland/libinput/tree/tools/event-gui.c
-
-Build instructions:
-http://wayland.freedesktop.org/libinput/doc/latest/building_libinput.html
+- A commandline debugging tool: https://cgit.freedesktop.org/wayland/libinput/tree/tools/libinput-debug-events.c
+- A GTK application that draws cursor/touch/tablet positions: https://cgit.freedesktop.org/wayland/libinput/tree/tools/libinput-debug-gui.c
 
 License
 -------
@@ -94,5 +90,3 @@ libinput is licensed under the MIT license.
 
 See the [COPYING](http://cgit.freedesktop.org/wayland/libinput/tree/COPYING)
 file for the full license information.
-
-*/

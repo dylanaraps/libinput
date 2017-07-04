@@ -73,6 +73,8 @@ enum evdev_device_tags {
 	EVDEV_TAG_TRACKPOINT = (1 << 3),
 	EVDEV_TAG_KEYBOARD = (1 << 4),
 	EVDEV_TAG_LID_SWITCH = (1 << 5),
+	EVDEV_TAG_INTERNAL_KEYBOARD = (1 << 6),
+	EVDEV_TAG_EXTERNAL_KEYBOARD = (1 << 7),
 };
 
 enum evdev_middlebutton_state {
@@ -111,11 +113,8 @@ enum evdev_device_model {
 	EVDEV_MODEL_ALPS_TOUCHPAD = (1 << 8),
 	EVDEV_MODEL_SYNAPTICS_SERIAL_TOUCHPAD = (1 << 9),
 	EVDEV_MODEL_JUMPING_SEMI_MT = (1 << 10),
-	EVDEV_MODEL_ELANTECH_TOUCHPAD = (1 << 11),
 	EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81 = (1 << 12),
-	EVDEV_MODEL_APPLE_INTERNAL_KEYBOARD = (1 << 13),
 	EVDEV_MODEL_CYBORG_RAT = (1 << 14),
-	EVDEV_MODEL_CYAPA = (1 << 15),
 	EVDEV_MODEL_HP_STREAM11_TOUCHPAD = (1 << 16),
 	EVDEV_MODEL_LENOVO_T450_TOUCHPAD= (1 << 17),
 	EVDEV_MODEL_TOUCHPAD_VISIBLE_MARKER = (1 << 18),
@@ -250,9 +249,7 @@ struct evdev_device {
 static inline struct evdev_device *
 evdev_device(struct libinput_device *device)
 {
-	struct evdev_device *d;
-
-	return container_of(device, d, base);
+	return container_of(device, struct evdev_device, base);
 }
 
 #define EVDEV_UNHANDLED_DEVICE ((struct evdev_device *) 1)
@@ -374,11 +371,9 @@ struct fallback_dispatch {
 static inline struct fallback_dispatch*
 fallback_dispatch(struct evdev_dispatch *dispatch)
 {
-	struct fallback_dispatch *f;
-
 	evdev_verify_dispatch_type(dispatch, DISPATCH_FALLBACK);
 
-	return container_of(dispatch, f, base);
+	return container_of(dispatch, struct fallback_dispatch, base);
 }
 
 struct evdev_device *

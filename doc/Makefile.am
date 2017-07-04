@@ -5,7 +5,7 @@ EXTRA_DIST = \
 
 header_files = \
 	$(top_srcdir)/src/libinput.h \
-	$(top_srcdir)/README.txt \
+	$(top_srcdir)/README.md \
 	$(srcdir)/absolute-axes.dox \
 	$(srcdir)/absolute-coordinate-ranges.dox \
 	$(srcdir)/building.dox \
@@ -27,8 +27,10 @@ header_files = \
 	$(srcdir)/tablet-support.dox \
 	$(srcdir)/tapping.dox \
 	$(srcdir)/test-suite.dox \
+	$(srcdir)/timestamps.dox \
 	$(srcdir)/tools.dox \
 	$(srcdir)/touchpad-jumping-cursors.dox \
+	$(srcdir)/touchpad-pressure.dox \
 	$(srcdir)/touchpads.dox \
 	$(srcdir)/what-is-libinput.dox
 

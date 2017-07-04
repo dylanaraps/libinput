@@ -44,15 +44,6 @@ enum touchpad_event {
 	TOUCHPAD_EVENT_OTHERAXIS	= (1 << 3),
 };
 
-enum touchpad_model {
-	MODEL_UNKNOWN = 0,
-	MODEL_SYNAPTICS,
-	MODEL_ALPS,
-	MODEL_APPLETOUCH,
-	MODEL_ELANTECH,
-	MODEL_UNIBODY_MACBOOK
-};
-
 enum touch_state {
 	TOUCH_NONE = 0,
 	TOUCH_HOVERING,
@@ -66,6 +57,7 @@ enum touch_palm_state {
 	PALM_EDGE,
 	PALM_TYPING,
 	PALM_TRACKPOINT,
+	PALM_TOOL_PALM,
 };
 
 enum button_event {
@@ -152,8 +144,9 @@ struct tp_touch {
 	bool has_ended;				/* TRACKING_ID == -1 */
 	bool dirty;
 	struct device_coords point;
-	uint64_t millis;
+	uint64_t time;
 	int pressure;
+	bool is_tool_palm; /* MT_TOOL_PALM */
 
 	bool was_down; /* if distance == 0, false for pure hovering
 			  touches */
@@ -328,7 +321,8 @@ struct tp_dispatch {
 		struct libinput_timer timer;
 		enum tp_tap_state state;
 		uint32_t buttons_pressed;
-		uint64_t first_press_time;
+		uint64_t saved_press_time,
+			 saved_release_time;
 
 		enum libinput_config_tap_button_map map;
 		enum libinput_config_tap_button_map want_map;
@@ -347,6 +341,8 @@ struct tp_dispatch {
 		uint64_t trackpoint_last_event_time;
 		uint32_t trackpoint_event_count;
 		bool monitor_trackpoint;
+
+		bool use_mt_tool;
 	} palm;
 
 	struct {
@@ -395,11 +391,9 @@ struct tp_dispatch {
 static inline struct tp_dispatch*
 tp_dispatch(struct evdev_dispatch *dispatch)
 {
-	struct tp_dispatch *tp;
-
 	evdev_verify_dispatch_type(dispatch, DISPATCH_TOUCHPAD);
 
-	return container_of(dispatch, tp, base);
+	return container_of(dispatch, struct tp_dispatch, base);
 }
 
 #define tp_for_each_touch(_tp, _t) \

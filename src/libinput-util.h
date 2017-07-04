@@ -34,10 +34,12 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "libinput.h"
 
@@ -52,6 +54,21 @@
 
 /* The HW DPI rate we normalize to before calculating pointer acceleration */
 #define DEFAULT_MOUSE_DPI 1000
+
+#define ANSI_HIGHLIGHT		"\x1B[0;1;39m"
+#define ANSI_RED		"\x1B[0;31m"
+#define ANSI_GREEN		"\x1B[0;32m"
+#define ANSI_YELLOW		"\x1B[0;33m"
+#define ANSI_BLUE		"\x1B[0;34m"
+#define ANSI_MAGENTA		"\x1B[0;35m"
+#define ANSI_CYAN		"\x1B[0;36m"
+#define ANSI_BRIGHT_RED		"\x1B[0;31;1m"
+#define ANSI_BRIGHT_GREEN	"\x1B[0;32;1m"
+#define ANSI_BRIGHT_YELLOW	"\x1B[0;33;1m"
+#define ANSI_BRIGHT_BLUE	"\x1B[0;34;1m"
+#define ANSI_BRIGHT_MAGENTA	"\x1B[0;35;1m"
+#define ANSI_BRIGHT_CYAN	"\x1B[0;36;1m"
+#define ANSI_NORMAL		"\x1B[0m"
 
 #define CASE_RETURN_STRING(a) case a: return #a
 
@@ -70,28 +87,25 @@ void list_insert(struct list *list, struct list *elm);
 void list_remove(struct list *elm);
 bool list_empty(const struct list *list);
 
-#ifdef __GNUC__
-#define container_of(ptr, sample, member)				\
-	(__typeof__(sample))((char *)(ptr)	-			\
-		 ((char *)&(sample)->member - (char *)(sample)))
-#else
-#define container_of(ptr, sample, member)				\
-	(void *)((char *)(ptr)	-				        \
-		 ((char *)&(sample)->member - (char *)(sample)))
-#endif
+#define container_of(ptr, type, member)					\
+	(__typeof__(type) *)((char *)(ptr) -				\
+		 offsetof(__typeof__(type), member))
+
+#define list_first_entry(head, pos, member)				\
+	container_of((head)->next, __typeof__(*pos), member)
 
 #define list_for_each(pos, head, member)				\
-	for (pos = 0, pos = container_of((head)->next, pos, member);	\
+	for (pos = 0, pos = list_first_entry(head, pos, member);	\
 	     &pos->member != (head);					\
-	     pos = container_of(pos->member.next, pos, member))
+	     pos = list_first_entry(&pos->member, pos, member))
 
 #define list_for_each_safe(pos, tmp, head, member)			\
 	for (pos = 0, tmp = 0, 						\
-	     pos = container_of((head)->next, pos, member),		\
-	     tmp = container_of((pos)->member.next, tmp, member);	\
+	     pos = list_first_entry(head, pos, member),			\
+	     tmp = list_first_entry(&pos->member, tmp, member);		\
 	     &pos->member != (head);					\
 	     pos = tmp,							\
-	     tmp = container_of(pos->member.next, tmp, member))
+	     tmp = list_first_entry(&pos->member, tmp, member))
 
 #define NBITS(b) (b * 8)
 #define LONG_BITS (sizeof(long) * 8)
@@ -378,6 +392,7 @@ int parse_mouse_wheel_click_count_property(const char *prop);
 double parse_trackpoint_accel_property(const char *prop);
 bool parse_dimension_property(const char *prop, size_t *width, size_t *height);
 bool parse_calibration_property(const char *prop, float calibration[6]);
+bool parse_pressure_range_property(const char *prop, int *hi, int *lo);
 
 enum tpkbcombo_layout {
 	TPKBCOMBO_LAYOUT_UNKNOWN,
@@ -424,6 +439,12 @@ static inline uint32_t
 us2ms(uint64_t us)
 {
 	return (uint32_t)(us / 1000);
+}
+
+static inline uint64_t
+tv2us(const struct timeval *tv)
+{
+	return s2us(tv->tv_sec) + tv->tv_usec;
 }
 
 static inline bool

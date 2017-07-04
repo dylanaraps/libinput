@@ -105,6 +105,7 @@ START_TEST(event_conversion_device_notify)
 					   EV_KEY, BTN_LEFT,
 					   -1, -1);
 	li = libinput_path_create_context(&simple_interface, NULL);
+	litest_restore_log_handler(li); /* use the default litest handler */
 	libinput_path_add_device(li, libevdev_uinput_get_devnode(uinput));
 
 	libinput_dispatch(li);
@@ -1001,6 +1002,48 @@ START_TEST(calibration_prop_parser)
 }
 END_TEST
 
+struct parser_test_pressure_range {
+	char *tag;
+	bool success;
+	int hi, lo;
+};
+
+START_TEST(pressure_range_prop_parser)
+{
+	struct parser_test_pressure_range tests[] = {
+		{ "10:8", true, 10, 8 },
+		{ "100:-1", true, 100, -1 },
+		{ "-203813:-502023", true, -203813, -502023 },
+		{ "238492:28210", true, 238492, 28210 },
+		{ "none", true, 0, 0 },
+		{ "0:0", false, 0, 0 },
+		{ "", false, 0, 0 },
+		{ "abcd", false, 0, 0 },
+		{ "10:30:10", false, 0, 0 },
+		{ NULL, false, 0, 0 }
+	};
+	int i;
+	int hi, lo;
+	bool success;
+
+	for (i = 0; tests[i].tag != NULL; i++) {
+		hi = lo = 0xad;
+		success = parse_pressure_range_property(tests[i].tag, &hi, &lo);
+		ck_assert(success == tests[i].success);
+		if (success) {
+			ck_assert_int_eq(hi, tests[i].hi);
+			ck_assert_int_eq(lo, tests[i].lo);
+		} else {
+			ck_assert_int_eq(hi, 0xad);
+			ck_assert_int_eq(lo, 0xad);
+		}
+	}
+
+	success = parse_pressure_range_property(NULL, NULL, NULL);
+	ck_assert(success == false);
+}
+END_TEST
+
 START_TEST(time_conversion)
 {
 	ck_assert_int_eq(us(10), 10);
@@ -1160,16 +1203,6 @@ const struct libinput_interface leak_interface = {
 	.close_restricted = close_restricted_leak,
 };
 
-LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
-static void
-simple_log_handler(struct libinput *libinput,
-		   enum libinput_log_priority priority,
-		   const char *format,
-		   va_list args)
-{
-	vfprintf(stderr, format, args);
-}
-
 START_TEST(fd_no_event_leak)
 {
 	struct libevdev_uinput *uinput;
@@ -1192,8 +1225,7 @@ START_TEST(fd_no_event_leak)
 	ck_assert_int_gt(fd, -1);
 
 	li = libinput_path_create_context(&leak_interface, &fd);
-	libinput_log_set_priority(li, LIBINPUT_LOG_PRIORITY_DEBUG);
-	libinput_log_set_handler(li, simple_log_handler);
+	litest_restore_log_handler(li); /* use the default litest handler */
 
 	/* Add the device, trigger an event, then remove it again.
 	 * Without it, we get a SYN_DROPPED immediately and no events.
@@ -1275,6 +1307,7 @@ litest_setup_tests_misc(void)
 	litest_add_no_device("misc:parser", dimension_prop_parser);
 	litest_add_no_device("misc:parser", reliability_prop_parser);
 	litest_add_no_device("misc:parser", calibration_prop_parser);
+	litest_add_no_device("misc:parser", pressure_range_prop_parser);
 	litest_add_no_device("misc:parser", safe_atoi_test);
 	litest_add_no_device("misc:parser", safe_atod_test);
 	litest_add_no_device("misc:parser", strsplit_test);

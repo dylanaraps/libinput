@@ -34,6 +34,7 @@ struct lid_switch_dispatch {
 	enum switch_reliability reliability;
 
 	bool lid_is_closed;
+	bool lid_is_closed_client_state;
 
 	struct {
 		struct evdev_device *keyboard;
@@ -44,11 +45,23 @@ struct lid_switch_dispatch {
 static inline struct lid_switch_dispatch*
 lid_dispatch(struct evdev_dispatch *dispatch)
 {
-	struct lid_switch_dispatch *l;
-
 	evdev_verify_dispatch_type(dispatch, DISPATCH_LID_SWITCH);
 
-	return container_of(dispatch, l, base);
+	return container_of(dispatch, struct lid_switch_dispatch, base);
+}
+
+static void
+lid_switch_notify_toggle(struct lid_switch_dispatch *dispatch,
+			 struct evdev_device *device,
+			 uint64_t time)
+{
+	if (dispatch->lid_is_closed ^ dispatch->lid_is_closed_client_state) {
+		switch_notify_toggle(&device->base,
+				     time,
+				     LIBINPUT_SWITCH_LID,
+				     dispatch->lid_is_closed);
+		dispatch->lid_is_closed_client_state = dispatch->lid_is_closed;
+	}
 }
 
 static void
@@ -76,11 +89,12 @@ lid_switch_keyboard_event(uint64_t time,
 		 * regardless. */
 	}
 
+	/* Posting the event here means we preempt the keyboard events that
+	 * caused us to wake up, so the lid event is always passed on before
+	 * the key event.
+	 */
 	dispatch->lid_is_closed = false;
-	switch_notify_toggle(&dispatch->device->base,
-			     time,
-			     LIBINPUT_SWITCH_LID,
-			     dispatch->lid_is_closed);
+	lid_switch_notify_toggle(dispatch, dispatch->device, time);
 }
 
 static void
@@ -92,13 +106,15 @@ lid_switch_toggle_keyboard_listener(struct lid_switch_dispatch *dispatch,
 
 	if (is_closed) {
 		libinput_device_add_event_listener(
-					   &dispatch->keyboard.keyboard->base,
-					   &dispatch->keyboard.listener,
-					   lid_switch_keyboard_event,
-					   dispatch);
+					&dispatch->keyboard.keyboard->base,
+					&dispatch->keyboard.listener,
+					lid_switch_keyboard_event,
+					dispatch);
 	} else {
 		libinput_device_remove_event_listener(
-						      &dispatch->keyboard.listener);
+					&dispatch->keyboard.listener);
+		libinput_device_init_event_listener(
+					&dispatch->keyboard.listener);
 	}
 }
 
@@ -116,16 +132,12 @@ lid_switch_process_switch(struct lid_switch_dispatch *dispatch,
 
 		if (dispatch->lid_is_closed == is_closed)
 			return;
-
 		lid_switch_toggle_keyboard_listener(dispatch,
 						    is_closed);
 
 		dispatch->lid_is_closed = is_closed;
 
-		switch_notify_toggle(&device->base,
-				     time,
-				     LIBINPUT_SWITCH_LID,
-				     dispatch->lid_is_closed);
+		lid_switch_notify_toggle(dispatch, device, time);
 		break;
 	}
 }
@@ -173,6 +185,17 @@ evdev_read_switch_reliability_prop(struct evdev_device *device)
 }
 
 static void
+lid_switch_remove(struct evdev_dispatch *evdev_dispatch)
+{
+	struct lid_switch_dispatch *dispatch = lid_dispatch(evdev_dispatch);
+
+	if (!dispatch->keyboard.keyboard)
+		return;
+
+	libinput_device_remove_event_listener(&dispatch->keyboard.listener);
+}
+
+static void
 lid_switch_destroy(struct evdev_dispatch *evdev_dispatch)
 {
 	struct lid_switch_dispatch *dispatch = lid_dispatch(evdev_dispatch);
@@ -186,27 +209,26 @@ lid_switch_pair_keyboard(struct evdev_device *lid_switch,
 {
 	struct lid_switch_dispatch *dispatch =
 		lid_dispatch(lid_switch->dispatch);
-	unsigned int bus_kbd = libevdev_get_id_bustype(keyboard->evdev);
 
 	if ((keyboard->tags & EVDEV_TAG_KEYBOARD) == 0)
 		return;
 
-	/* If we already have a keyboard paired, override it if the new one
-	 * is a serio device. Otherwise keep the current one */
-	if (dispatch->keyboard.keyboard) {
-		if (bus_kbd != BUS_I8042)
-			return;
-		libinput_device_remove_event_listener(&dispatch->keyboard.listener);
+	if (dispatch->keyboard.keyboard)
+		return;
+
+	if (keyboard->tags & EVDEV_TAG_INTERNAL_KEYBOARD) {
+		dispatch->keyboard.keyboard = keyboard;
+		evdev_log_debug(lid_switch,
+				"lid: keyboard paired with %s<->%s\n",
+				lid_switch->devname,
+				keyboard->devname);
+
+		/* We need to init the event listener now only if the reported state
+		 * is closed. */
+		if (dispatch->lid_is_closed)
+			lid_switch_toggle_keyboard_listener(dispatch,
+						    dispatch->lid_is_closed);
 	}
-
-	dispatch->keyboard.keyboard = keyboard;
-	evdev_log_debug(lid_switch,
-			"lid: keyboard paired with %s<->%s\n",
-			lid_switch->devname,
-			keyboard->devname);
-
-	/* We don't init the event listener yet - we don't care about
-	 * keyboard events until the lid is closed */
 }
 
 static void
@@ -224,7 +246,9 @@ lid_switch_interface_device_removed(struct evdev_device *device,
 
 	if (removed_device == dispatch->keyboard.keyboard) {
 		libinput_device_remove_event_listener(
-				      &dispatch->keyboard.listener);
+					&dispatch->keyboard.listener);
+		libinput_device_init_event_listener(
+					&dispatch->keyboard.listener);
 		dispatch->keyboard.keyboard = NULL;
 	}
 }
@@ -235,9 +259,11 @@ lid_switch_sync_initial_state(struct evdev_device *device,
 {
 	struct lid_switch_dispatch *dispatch = lid_dispatch(device->dispatch);
 	struct libevdev *evdev = device->evdev;
-	bool is_closed = false;
 
 	dispatch->reliability = evdev_read_switch_reliability_prop(device);
+
+	dispatch->lid_is_closed = libevdev_get_event_value(evdev, EV_SW, SW_LID);
+	dispatch->lid_is_closed_client_state = false;
 
 	/* For the initial state sync, we depend on whether the lid switch
 	 * is reliable. If we know it's reliable, we sync as expected.
@@ -246,31 +272,18 @@ lid_switch_sync_initial_state(struct evdev_device *device,
 	 * that always have the switch in 'on' state thus don't mess up our
 	 * touchpad.
 	 */
-	switch(dispatch->reliability) {
-	case RELIABILITY_UNKNOWN:
-	case RELIABILITY_WRITE_OPEN:
-		is_closed = false;
-		break;
-	case RELIABILITY_RELIABLE:
-		is_closed = libevdev_get_event_value(evdev, EV_SW, SW_LID);
-		break;
-	}
-
-	dispatch->lid_is_closed = is_closed;
-	if (dispatch->lid_is_closed) {
+	if (dispatch->lid_is_closed &&
+	    dispatch->reliability == RELIABILITY_RELIABLE) {
 		uint64_t time;
 		time = libinput_now(evdev_libinput_context(device));
-		switch_notify_toggle(&device->base,
-				     time,
-				     LIBINPUT_SWITCH_LID,
-				     LIBINPUT_SWITCH_STATE_ON);
+		lid_switch_notify_toggle(dispatch, device, time);
 	}
 }
 
 struct evdev_dispatch_interface lid_switch_interface = {
 	lid_switch_process,
 	NULL, /* suspend */
-	NULL, /* remove */
+	lid_switch_remove,
 	lid_switch_destroy,
 	lid_switch_interface_device_added,
 	lid_switch_interface_device_removed,

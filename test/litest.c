@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include "linux/input.h"
 #include <sys/ptrace.h>
+#include <sys/resource.h>
 #include <sys/sendfile.h>
 #include <sys/timerfd.h>
 #include <sys/wait.h>
@@ -54,11 +55,13 @@
 #define UDEV_RULE_PREFIX "99-litest-"
 #define UDEV_HWDB_D "/etc/udev/hwdb.d"
 #define UDEV_MODEL_QUIRKS_RULE_FILE UDEV_RULES_D \
-	"/91-litest-model-quirks-REMOVEME.rules"
+	"/91-litest-model-quirks-REMOVEME-XXXXXX.rules"
 #define UDEV_MODEL_QUIRKS_HWDB_FILE UDEV_HWDB_D \
-	"/91-litest-model-quirks-REMOVEME.hwdb"
+	"/91-litest-model-quirks-REMOVEME-XXXXXX.hwdb"
 #define UDEV_TEST_DEVICE_RULE_FILE UDEV_RULES_D \
-	"/91-litest-test-device-REMOVEME.rules"
+	"/91-litest-test-device-REMOVEME-XXXXXXX.rules"
+#define UDEV_DEVICE_GROUPS_FILE UDEV_RULES_D \
+	"/80-libinput-device-groups-litest-XXXXXX.rules"
 
 static int jobs = 8;
 static int in_debugger = -1;
@@ -87,7 +90,7 @@ static void litest_remove_udev_rules(struct list *created_files_list);
 #define litest_vlog(...) { /* __VA_ARGS__ */ }
 #endif
 
-#ifdef HAVE_LIBUNWIND
+#if HAVE_LIBUNWIND
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 #include <dlfcn.h>
@@ -318,16 +321,18 @@ litest_fail_comparison_ptr(const char *file,
 struct test {
 	struct list node;
 	char *name;
-	TCase *tc;
-	enum litest_device_type devices;
+	char *devname;
+	void *func;
+	void *setup;
+	void *teardown;
+
+	struct range range;
 };
 
 struct suite {
 	struct list node;
 	struct list tests;
 	char *name;
-	Suite *suite;
-	bool used;
 };
 
 static struct litest_device *current_device;
@@ -517,37 +522,19 @@ litest_add_tcase_for_device(struct suite *suite,
 			    const struct range *range)
 {
 	struct test *t;
-	const char *test_name = dev->shortname;
-
-	list_for_each(t, &suite->tests, node) {
-		if (!streq(t->name, test_name))
-			continue;
-
-		if (range)
-			tcase_add_loop_test(t->tc,
-					    func,
-					    range->lower,
-					    range->upper);
-		else
-			tcase_add_test(t->tc, func);
-		return;
-	}
 
 	t = zalloc(sizeof(*t));
 	assert(t != NULL);
-	t->name = strdup(test_name);
-	t->tc = tcase_create(test_name);
-	list_insert(&suite->tests, &t->node);
-	tcase_add_checked_fixture(t->tc, dev->setup,
-				  dev->teardown ? dev->teardown : litest_generic_device_teardown);
+	t->name = strdup(funcname);
+	t->devname = strdup(dev->shortname);
+	t->func = func;
+	t->setup = dev->setup;
+	t->teardown = dev->teardown ?
+			dev->teardown : litest_generic_device_teardown;
 	if (range)
-		tcase_add_loop_test(t->tc,
-				    func,
-				    range->lower,
-				    range->upper);
-	else
-		tcase_add_test(t->tc, func);
-	suite_add_tcase(suite->suite, t->tc);
+		t->range = *range;
+
+	list_insert(&suite->tests, &t->node);
 }
 
 static void
@@ -562,27 +549,17 @@ litest_add_tcase_no_device(struct suite *suite,
 	    fnmatch(filter_device, test_name, 0) != 0)
 		return;
 
-	list_for_each(t, &suite->tests, node) {
-		if (!streq(t->name, test_name))
-			continue;
-
-		if (range)
-			tcase_add_loop_test(t->tc, func, range->lower, range->upper);
-		else
-			tcase_add_test(t->tc, func);
-		return;
-	}
-
 	t = zalloc(sizeof(*t));
 	assert(t != NULL);
 	t->name = strdup(test_name);
-	t->tc = tcase_create(test_name);
-	list_insert(&suite->tests, &t->node);
+	t->devname = strdup("no device");
+	t->func = func;
 	if (range)
-		tcase_add_loop_test(t->tc, func, range->lower, range->upper);
-	else
-		tcase_add_test(t->tc, func);
-	suite_add_tcase(suite->suite, t->tc);
+		t->range = *range;
+	t->setup = NULL;
+	t->teardown = NULL;
+
+	list_insert(&suite->tests, &t->node);
 }
 
 static struct suite *
@@ -601,8 +578,6 @@ get_suite(const char *name)
 	s = zalloc(sizeof(*s));
 	assert(s != NULL);
 	s->name = strdup(name);
-	s->suite = suite_create(s->name);
-	s->used = false;
 
 	list_init(&s->tests);
 	list_insert(&all_tests, &s->node);
@@ -785,18 +760,60 @@ litest_log_handler(struct libinput *libinput,
 		   const char *format,
 		   va_list args)
 {
+	static int is_tty = -1;
+	static bool had_newline = true;
 	const char *priority = NULL;
+	const char *color;
+
+	if (is_tty == -1)
+		is_tty = isatty(STDERR_FILENO);
 
 	switch(pri) {
-	case LIBINPUT_LOG_PRIORITY_INFO: priority = "info"; break;
-	case LIBINPUT_LOG_PRIORITY_ERROR: priority = "error"; break;
-	case LIBINPUT_LOG_PRIORITY_DEBUG: priority = "debug"; break;
+	case LIBINPUT_LOG_PRIORITY_INFO:
+		priority =  "info ";
+		color = ANSI_HIGHLIGHT;
+		break;
+	case LIBINPUT_LOG_PRIORITY_ERROR:
+		priority = "error";
+		color = ANSI_BRIGHT_RED;
+		break;
+	case LIBINPUT_LOG_PRIORITY_DEBUG:
+		priority = "debug";
+		color = ANSI_NORMAL;
+		break;
 	default:
 		  abort();
 	}
 
-	fprintf(stderr, "litest %s: ", priority);
+	if (!is_tty)
+		color = "";
+
+	if (had_newline)
+		fprintf(stderr, "%slitest %s ", color, priority);
+
+	if (strstr(format, "tap state:"))
+		color = ANSI_BLUE;
+	else if (strstr(format, "thumb state:"))
+		color = ANSI_YELLOW;
+	else if (strstr(format, "button state:"))
+		color = ANSI_MAGENTA;
+	else if (strstr(format, "touch-size:") ||
+		 strstr(format, "pressure:"))
+		color = ANSI_GREEN;
+	else if (strstr(format, "palm:") ||
+		 strstr(format, "thumb:"))
+		color = ANSI_CYAN;
+	else if (strstr(format, "edge state:"))
+		color = ANSI_BRIGHT_GREEN;
+
+	if (is_tty)
+		fprintf(stderr, "%s ", color);
+
 	vfprintf(stderr, format, args);
+	had_newline = strlen(format) >= 1 &&
+		      format[strlen(format) - 1] == '\n';
+	if (is_tty && had_newline)
+		fprintf(stderr, ANSI_NORMAL);
 
 	if (strstr(format, "client bug: ") ||
 	    strstr(format, "libinput bug: "))
@@ -881,27 +898,13 @@ static void
 litest_free_test_list(struct list *tests)
 {
 	struct suite *s, *snext;
-	SRunner *sr = NULL;
-
-	/* quirk needed for check: test suites can only get freed by adding
-	 * them to a test runner and freeing the runner. Without this,
-	 * valgrind complains */
-	list_for_each(s, tests, node) {
-		if (s->used)
-			continue;
-
-		if (!sr)
-			sr = srunner_create(s->suite);
-		else
-			srunner_add_suite(sr, s->suite);
-	}
-	srunner_free(sr);
 
 	list_for_each_safe(s, snext, tests, node) {
 		struct test *t, *tnext;
 
 		list_for_each_safe(t, tnext, &s->tests, node) {
 			free(t->name);
+			free(t->devname);
 			list_remove(&t->node);
 			free(t);
 		}
@@ -918,32 +921,92 @@ litest_run_suite(char *argv0, struct list *tests, int which, int max)
 	int failed = 0;
 	SRunner *sr = NULL;
 	struct suite *s;
+	struct test *t;
 	int argvlen = strlen(argv0);
 	int count = -1;
+	struct name {
+		struct list node;
+		char *name;
+	};
+	struct name *n, *tmp;
+	struct list testnames;
 
 	if (max > 1)
 		snprintf(argv0, argvlen, "libinput-test-%-50d", which);
 
+	/* Check just takes the suite/test name pointers but doesn't strdup
+	 * them - we have to keep them around */
+	list_init(&testnames);
+
+	/* For each test, create one test suite with one test case, then
+	   add it to the test runner. The only benefit suites give us in
+	   check is that we can filter them, but our test runner has a
+	   --filter-group anyway. */
 	list_for_each(s, tests, node) {
-		++count;
-		if (max != 1 && (count % max) != which) {
-			continue;
+		list_for_each(t, &s->tests, node) {
+			Suite *suite;
+			TCase *tc;
+			char *sname, *tname;
+
+			count = (count + 1) % max;
+			if (max != 1 && (count % max) != which)
+				continue;
+
+			xasprintf(&sname,
+				  "%s:%s:%s",
+				  s->name,
+				  t->name,
+				  t->devname);
+			litest_assert(sname != NULL);
+			n = zalloc(sizeof(*n));
+			litest_assert_notnull(n);
+			n->name = sname;
+			list_insert(&testnames, &n->node);
+
+			xasprintf(&tname,
+				  "%s:%s",
+				  t->name,
+				  t->devname);
+			litest_assert(tname != NULL);
+			n = zalloc(sizeof(*n));
+			litest_assert_notnull(n);
+			n->name = tname;
+			list_insert(&testnames, &n->node);
+
+			tc = tcase_create(tname);
+			tcase_add_checked_fixture(tc,
+						  t->setup,
+						  t->teardown);
+			if (t->range.upper != t->range.lower)
+				tcase_add_loop_test(tc,
+						    t->func,
+						    t->range.lower,
+						    t->range.upper);
+			else
+				tcase_add_test(tc, t->func);
+
+			suite = suite_create(sname);
+			suite_add_tcase(suite, tc);
+
+			if (!sr)
+				sr = srunner_create(suite);
+			else
+				srunner_add_suite(sr, suite);
 		}
-
-		if (!sr)
-			sr = srunner_create(s->suite);
-		else
-			srunner_add_suite(sr, s->suite);
-
-		s->used = true;
 	}
 
 	if (!sr)
-		return 0;
+		goto out;
 
 	srunner_run_all(sr, CK_ENV);
 	failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
+out:
+	list_for_each_safe(n, tmp, &testnames, node) {
+		free(n->name);
+		free(n);
+	}
+
 	return failed;
 }
 
@@ -1080,14 +1143,20 @@ litest_copy_file(const char *dest, const char *src, const char *header)
 {
 	int in, out, length;
 	struct created_file *file;
+	int suffixlen;
 
 	file = zalloc(sizeof(*file));
 	litest_assert(file);
 	file->path = strdup(dest);
 	litest_assert(file->path);
 
-	out = open(dest, O_CREAT|O_WRONLY, 0644);
-	litest_assert_int_gt(out, -1);
+	suffixlen = file->path + strlen(file->path)  - rindex(file->path, '.');
+	out = mkstemps(file->path, suffixlen);
+	if (out == -1)
+		litest_abort_msg("Failed to write to file %s (%s)\n",
+				 file->path,
+				 strerror(errno));
+	litest_assert_int_ne(chmod(file->path, 0644), -1);
 
 	if (header) {
 		length = strlen(header);
@@ -1095,7 +1164,10 @@ litest_copy_file(const char *dest, const char *src, const char *header)
 	}
 
 	in = open(src, O_RDONLY);
-	litest_assert_int_gt(in, -1);
+	if (in == -1)
+		litest_abort_msg("Failed to open file %s (%s)\n",
+				 src,
+				 strerror(errno));
 	/* lazy, just check for error and empty file copy */
 	litest_assert_int_gt(sendfile(out, in, NULL, 40960), 0);
 	close(out);
@@ -1131,6 +1203,11 @@ litest_install_model_quirks(struct list *created_files_list)
 				LIBINPUT_TEST_DEVICE_RULES_FILE,
 				warning);
 	list_insert(created_files_list, &file->link);
+
+	file = litest_copy_file(UDEV_DEVICE_GROUPS_FILE,
+				LIBINPUT_DEVICE_GROUPS_RULES_FILE,
+				warning);
+	list_insert(created_files_list, &file->link);
 }
 
 static void
@@ -1140,13 +1217,13 @@ litest_init_udev_rules(struct list *created_files)
 
 	rc = mkdir(UDEV_RULES_D, 0755);
 	if (rc == -1 && errno != EEXIST)
-		ck_abort_msg("Failed to create udev rules directory (%s)\n",
-			     strerror(errno));
+		litest_abort_msg("Failed to create udev rules directory (%s)\n",
+				 strerror(errno));
 
 	rc = mkdir(UDEV_HWDB_D, 0755);
 	if (rc == -1 && errno != EEXIST)
-		ck_abort_msg("Failed to create udev hwdb directory (%s)\n",
-			     strerror(errno));
+		litest_abort_msg("Failed to create udev hwdb directory (%s)\n",
+				 strerror(errno));
 
 	litest_install_model_quirks(created_files);
 	litest_init_all_device_udev_rules(created_files);
@@ -1172,6 +1249,7 @@ static char *
 litest_init_device_udev_rules(struct litest_test_device *dev)
 {
 	int rc;
+	int fd;
 	FILE *f;
 	char *path = NULL;
 
@@ -1179,7 +1257,7 @@ litest_init_device_udev_rules(struct litest_test_device *dev)
 		return NULL;
 
 	rc = xasprintf(&path,
-		      "%s/%s%s.rules",
+		      "%s/%s%s-XXXXXX.rules",
 		      UDEV_RULES_D,
 		      UDEV_RULE_PREFIX,
 		      dev->shortname);
@@ -1187,8 +1265,11 @@ litest_init_device_udev_rules(struct litest_test_device *dev)
 			     (int)(
 				   strlen(UDEV_RULES_D) +
 				   strlen(UDEV_RULE_PREFIX) +
-				   strlen(dev->shortname) + 7));
-	f = fopen(path, "w");
+				   strlen(dev->shortname) + 14));
+
+	fd = mkstemps(path, 6);
+	litest_assert_int_ne(fd, -1);
+	f = fdopen(fd, "w");
 	litest_assert_notnull(f);
 	litest_assert_int_ge(fputs(dev->udev_rule, f), 0);
 	fclose(f);
@@ -1383,20 +1464,6 @@ struct litest_device *
 litest_create_device(enum litest_device_type which)
 {
 	return litest_create_device_with_overrides(which, NULL, NULL, NULL, NULL);
-}
-
-int
-litest_handle_events(struct litest_device *d)
-{
-	struct pollfd fd;
-
-	fd.fd = libinput_get_fd(d->libinput);
-	fd.events = POLLIN;
-
-	while (poll(&fd, 1, 1))
-		libinput_dispatch(d->libinput);
-
-	return 0;
 }
 
 void
@@ -2297,7 +2364,8 @@ litest_wait_for_event_of_type(struct libinput *li, ...)
 		struct libinput_event *event;
 
 		while ((type = libinput_next_event_type(li)) == LIBINPUT_EVENT_NONE) {
-			poll(&fds, 1, -1);
+			int rc = poll(&fds, 1, 2000);
+			litest_assert_int_gt(rc, 0);
 			libinput_dispatch(li);
 		}
 
@@ -2665,6 +2733,7 @@ litest_create_uinput_device_from_description(const char *name,
 {
 	struct libevdev_uinput *uinput;
 	const char *syspath;
+	char path[PATH_MAX];
 
 	struct udev *udev;
 	struct udev_monitor *udev_monitor;
@@ -2688,6 +2757,7 @@ litest_create_uinput_device_from_description(const char *name,
 	uinput = litest_create_uinput(name, id, abs_info, events);
 
 	syspath = libevdev_uinput_get_syspath(uinput);
+	snprintf(path, sizeof(path), "%s/event", syspath);
 
 	/* blocking, we don't want to continue until udev is ready */
 	while (1) {
@@ -2700,7 +2770,7 @@ litest_create_uinput_device_from_description(const char *name,
 		}
 
 		udev_syspath = udev_device_get_syspath(udev_device);
-		if (udev_syspath && streq(udev_syspath, syspath))
+		if (udev_syspath && strneq(udev_syspath, path, strlen(path)))
 			break;
 
 		udev_device_unref(udev_device);
@@ -3539,6 +3609,7 @@ litest_list_tests(struct list *tests)
 int
 main(int argc, char **argv)
 {
+	const struct rlimit corelimit = { 0, 0 };
 	enum litest_mode mode;
 
 	list_init(&all_tests);
@@ -3576,6 +3647,9 @@ main(int argc, char **argv)
 		litest_list_tests(&all_tests);
 		return EXIT_SUCCESS;
 	}
+
+	if (setrlimit(RLIMIT_CORE, &corelimit) != 0)
+		perror("WARNING: Core dumps not disabled. Reason");
 
 	return litest_run(argc, argv);
 }
