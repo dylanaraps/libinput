@@ -1,5 +1,5 @@
 project('libinput', 'c', 'cpp',
-	version : '1.8.0',
+	version : '1.8.1',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu99', 'warning_level=2' ],
 	meson_version : '>= 0.40.0')
@@ -62,6 +62,8 @@ if have_libwacom
 			  name : 'libwacom_get_paired_device check',
 			  dependencies : dep_libwacom)
 	config_h.set10('HAVE_LIBWACOM_GET_PAIRED_DEVICE', result)
+else
+	dep_libwacom = declare_dependency()
 endif
 
 ############ udev bits ############
