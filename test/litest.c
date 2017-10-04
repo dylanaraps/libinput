@@ -416,6 +416,8 @@ extern struct litest_test_device litest_mouse_wheel_tilt_device;
 extern struct litest_test_device litest_lid_switch_device;
 extern struct litest_test_device litest_lid_switch_surface3_device;
 extern struct litest_test_device litest_appletouch_device;
+extern struct litest_test_device litest_gpio_keys_device;
+extern struct litest_test_device litest_wacom_mobilestudio_13hdt_pad_device;
 
 struct litest_test_device* devices[] = {
 	&litest_synaptics_clickpad_device,
@@ -481,6 +483,8 @@ struct litest_test_device* devices[] = {
 	&litest_lid_switch_device,
 	&litest_lid_switch_surface3_device,
 	&litest_appletouch_device,
+	&litest_gpio_keys_device,
+	&litest_wacom_mobilestudio_13hdt_pad_device,
 	NULL,
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2013 Red Hat, Inc.
+ * Copyright © 2017 Red Hat, Inc
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -25,56 +25,51 @@
 
 #include "litest.h"
 #include "litest-int.h"
-#include "libinput-util.h"
 
-static void all_codes_create(struct litest_device *d);
-
-static void litest_keyboard_all_codes_setup(void)
+static void
+litest_gpio_keys_setup(void)
 {
-	struct litest_device *d = litest_create_device(LITEST_KEYBOARD_ALL_CODES);
+	struct litest_device *d = litest_create_device(LITEST_GPIO_KEYS);
 	litest_set_current_device(d);
 }
 
 static struct input_id input_id = {
-	.bustype = 0x11,
+	.bustype = 0x19,
 	.vendor = 0x1,
 	.product = 0x1,
 };
 
-struct litest_test_device litest_keyboard_all_codes_device = {
-	.type = LITEST_KEYBOARD_ALL_CODES,
-	.features = LITEST_KEYS,
-	.shortname = "keyboard all event codes",
-	.setup = litest_keyboard_all_codes_setup,
-	.interface = NULL,
-	.create = all_codes_create,
-
-	.name = "All event codes keyboard",
-	.id = &input_id,
-	.events = NULL,
-	.absinfo = NULL,
+static int events[] = {
+	EV_SW, SW_LID,
+	EV_SW, SW_TABLET_MODE,
+	EV_KEY, KEY_POWER,
+	EV_KEY, KEY_VOLUMEUP,
+	EV_KEY, KEY_VOLUMEDOWN,
+	EV_KEY, KEY_POWER,
+	-1, -1,
 };
 
-static void
-all_codes_create(struct litest_device *d)
-{
-	int events[KEY_MAX * 2 + 2];
-	int code, idx;
+static const char udev_rule[] =
+"ACTION==\"remove\", GOTO=\"switch_end\"\n"
+"KERNEL!=\"event*\", GOTO=\"switch_end\"\n"
+"\n"
+"ATTRS{name}==\"litest gpio-keys*\",\\\n"
+"    ENV{ID_INPUT_SWITCH}=\"1\",\\\n"
+"    ENV{LIBINPUT_ATTR_gpio_keys_RELIABILITY}=\"reliable\"\n"
+"\n"
+"LABEL=\"switch_end\"";
 
-	for (idx = 0, code = 0; code < KEY_MAX; code++) {
-		const char *name = libevdev_event_code_get_name(EV_KEY, code);
+struct litest_test_device litest_gpio_keys_device = {
+	.type = LITEST_GPIO_KEYS,
+	.features = LITEST_SWITCH,
+	.shortname = "gpio keys",
+	.setup = litest_gpio_keys_setup,
+	.interface = NULL,
 
-		if (name && strneq(name, "BTN_", 4))
-			continue;
+	.name = "gpio-keys",
+	.id = &input_id,
+	.events = events,
+	.absinfo = NULL,
 
-		events[idx++] = EV_KEY;
-		events[idx++] = code;
-	}
-	events[idx++] = -1;
-	events[idx++] = -1;
-
-	d->uinput = litest_create_uinput_device_from_description(litest_keyboard_all_codes_device.name,
-								 litest_keyboard_all_codes_device.id,
-								 NULL,
-								 events);
-}
+	.udev_rule = udev_rule,
+};

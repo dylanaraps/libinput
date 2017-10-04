@@ -28,6 +28,7 @@ liblitest_la_SOURCES = \
 	litest-device-cyborg-rat-5.c \
 	litest-device-elantech-touchpad.c \
 	litest-device-generic-singletouch.c \
+	litest-device-gpio-keys.c \
 	litest-device-huion-pentablet.c \
 	litest-device-keyboard.c \
 	litest-device-keyboard-all-codes.c \
@@ -71,6 +72,7 @@ liblitest_la_SOURCES = \
 	litest-device-wacom-intuos5-pen.c \
 	litest-device-wacom-isdv4-e6-pen.c \
 	litest-device-wacom-isdv4-e6-finger.c \
+	litest-device-wacom-mobilestudio-pro-pad.c \
 	litest-device-waltop-tablet.c \
 	litest-device-wheel-only.c \
 	litest-device-xen-virtual-pointer.c \

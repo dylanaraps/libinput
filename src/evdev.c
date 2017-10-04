@@ -755,7 +755,7 @@ get_key_type(uint16_t code)
 		return EVDEV_KEY_TYPE_KEY;
 	if (code >= BTN_DPAD_UP && code <= BTN_DPAD_RIGHT)
 		return EVDEV_KEY_TYPE_BUTTON;
-	if (code >= KEY_ALS_TOGGLE && code <= KEY_KBDINPUTASSIST_CANCEL)
+	if (code >= KEY_ALS_TOGGLE && code <= KEY_ONSCREEN_KEYBOARD)
 		return EVDEV_KEY_TYPE_KEY;
 	if (code >= BTN_TRIGGER_HAPPY && code <= BTN_TRIGGER_HAPPY40)
 		return EVDEV_KEY_TYPE_BUTTON;
@@ -801,16 +801,16 @@ fallback_process_key(struct fallback_dispatch *dispatch,
 	type = get_key_type(e->code);
 
 	/* Ignore key release events from the kernel for keys that libinput
-	 * never got a pressed event for. */
-	if (e->value == 0) {
-		switch (type) {
-		case EVDEV_KEY_TYPE_NONE:
-			break;
-		case EVDEV_KEY_TYPE_KEY:
-		case EVDEV_KEY_TYPE_BUTTON:
-			if (!hw_is_key_down(dispatch, e->code))
-				return;
-		}
+	 * never got a pressed event for or key presses for keys that we
+	 * think are still down */
+	switch (type) {
+	case EVDEV_KEY_TYPE_NONE:
+		break;
+	case EVDEV_KEY_TYPE_KEY:
+	case EVDEV_KEY_TYPE_BUTTON:
+		if ((e->value && hw_is_key_down(dispatch, e->code)) ||
+		    (e->value == 0 && !hw_is_key_down(dispatch, e->code)))
+			return;
 	}
 
 	hw_set_key_down(dispatch, e->code, e->value);
@@ -2473,6 +2473,20 @@ evdev_extract_abs_axes(struct evdev_device *device)
 	device->is_mt = 1;
 }
 
+static void
+evdev_disable_accelerometer_axes(struct evdev_device *device)
+{
+	struct libevdev *evdev = device->evdev;
+
+	libevdev_disable_event_code(evdev, EV_ABS, ABS_X);
+	libevdev_disable_event_code(evdev, EV_ABS, ABS_Y);
+	libevdev_disable_event_code(evdev, EV_ABS, ABS_Z);
+
+	libevdev_disable_event_code(evdev, EV_ABS, REL_X);
+	libevdev_disable_event_code(evdev, EV_ABS, REL_Y);
+	libevdev_disable_event_code(evdev, EV_ABS, REL_Z);
+}
+
 static struct evdev_dispatch *
 evdev_configure_device(struct evdev_device *device)
 {
@@ -2504,10 +2518,14 @@ evdev_configure_device(struct evdev_device *device)
 		 udev_tags & EVDEV_UDEV_TAG_TRACKBALL ? " Trackball" : "",
 		 udev_tags & EVDEV_UDEV_TAG_SWITCH ? " Switch" : "");
 
-	if (udev_tags & EVDEV_UDEV_TAG_ACCELEROMETER) {
+	/* Ignore pure accelerometers, but accept devices that are
+	 * accelerometers with other axes */
+	if (udev_tags == (EVDEV_UDEV_TAG_INPUT|EVDEV_UDEV_TAG_ACCELEROMETER)) {
 		evdev_log_info(device,
 			 "device is an accelerometer, ignoring\n");
 		return NULL;
+	} else if (udev_tags & EVDEV_UDEV_TAG_ACCELEROMETER) {
+		evdev_disable_accelerometer_axes(device);
 	}
 
 	/* libwacom *adds* TABLET, TOUCHPAD but leaves JOYSTICK in place, so

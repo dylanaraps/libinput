@@ -33,7 +33,8 @@ libinput_la_SOURCES =			\
 	path-seat.c			\
 	timer.c				\
 	timer.h				\
-	../include/linux/input.h
+	../include/linux/input.h	\
+	../include/linux/input-event-codes.h
 
 if HAVE_LIBUDEV
 libinput_la_SOURCES += udev-seat.c udev-seat.h
