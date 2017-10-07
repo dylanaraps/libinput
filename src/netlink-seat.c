@@ -140,7 +140,7 @@ netlink_input_add_devices(struct netlink_input *input)
 	for (i = 0; i < n; ++i) {
 		len = snprintf(path, sizeof(path), "/dev/input/%s", devices[i]->d_name);
 		free(devices[i]);
-		if (len >= sizeof(path)) {
+		if (len < 0 || len >= sizeof(path)) {
 			free(devices);
 			return -1;
 		}
