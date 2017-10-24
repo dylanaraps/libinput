@@ -497,7 +497,7 @@ evdev_middlebutton_handle_event(struct evdev_device *device,
 				uint64_t time,
 				enum evdev_middlebutton_event event)
 {
-	int rc;
+	int rc = 0;
 	enum evdev_middlebutton_state current;
 
 	current = device->middlebutton.state;
@@ -544,6 +544,11 @@ evdev_middlebutton_handle_event(struct evdev_device *device,
 		rc = evdev_middlebutton_ignore_r_handle_event(device,
 							      time,
 							      event);
+		break;
+	default:
+		evdev_log_bug_libinput(device,
+				       "Invalid middle button state %d\n",
+				       current);
 		break;
 	}
 
@@ -696,8 +701,15 @@ evdev_init_middlebutton(struct evdev_device *device,
 			bool enable,
 			bool want_config)
 {
+	char timer_name[64];
+
+	snprintf(timer_name,
+		 sizeof(timer_name),
+		 "%s middlebutton",
+		 evdev_device_get_sysname(device));
 	libinput_timer_init(&device->middlebutton.timer,
 			    evdev_libinput_context(device),
+			    timer_name,
 			    evdev_middlebutton_handle_timeout,
 			    device);
 	device->middlebutton.enabled_default = enable;

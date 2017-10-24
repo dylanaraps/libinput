@@ -502,8 +502,12 @@ START_TEST(event_conversion_switch)
 	struct libinput_event *event;
 	int sw = 0;
 
-	litest_lid_action(dev, LIBINPUT_SWITCH_STATE_ON);
-	litest_lid_action(dev, LIBINPUT_SWITCH_STATE_OFF);
+	litest_switch_action(dev,
+			     LIBINPUT_SWITCH_LID,
+			     LIBINPUT_SWITCH_STATE_ON);
+	litest_switch_action(dev,
+			     LIBINPUT_SWITCH_LID,
+			     LIBINPUT_SWITCH_STATE_OFF);
 	libinput_dispatch(li);
 
 	while ((event = libinput_get_event(li))) {
@@ -1002,15 +1006,15 @@ START_TEST(calibration_prop_parser)
 }
 END_TEST
 
-struct parser_test_pressure_range {
+struct parser_test_range {
 	char *tag;
 	bool success;
 	int hi, lo;
 };
 
-START_TEST(pressure_range_prop_parser)
+START_TEST(range_prop_parser)
 {
-	struct parser_test_pressure_range tests[] = {
+	struct parser_test_range tests[] = {
 		{ "10:8", true, 10, 8 },
 		{ "100:-1", true, 100, -1 },
 		{ "-203813:-502023", true, -203813, -502023 },
@@ -1028,7 +1032,7 @@ START_TEST(pressure_range_prop_parser)
 
 	for (i = 0; tests[i].tag != NULL; i++) {
 		hi = lo = 0xad;
-		success = parse_pressure_range_property(tests[i].tag, &hi, &lo);
+		success = parse_range_property(tests[i].tag, &hi, &lo);
 		ck_assert(success == tests[i].success);
 		if (success) {
 			ck_assert_int_eq(hi, tests[i].hi);
@@ -1039,8 +1043,36 @@ START_TEST(pressure_range_prop_parser)
 		}
 	}
 
-	success = parse_pressure_range_property(NULL, NULL, NULL);
+	success = parse_range_property(NULL, NULL, NULL);
 	ck_assert(success == false);
+}
+END_TEST
+
+START_TEST(palm_pressure_parser)
+{
+	struct parser_test tests[] = {
+		{ "1", 1 },
+		{ "10", 10 },
+		{ "255", 255 },
+
+		{ "-12", 0 },
+		{ "360", 0 },
+		{ "0", 0 },
+		{ "-0", 0 },
+		{ "a", 0 },
+		{ "10a", 0 },
+		{ "10-", 0 },
+		{ "sadfasfd", 0 },
+		{ "361", 0 },
+		{ NULL, 0 }
+	};
+
+	int i, angle;
+
+	for (i = 0; tests[i].tag != NULL; i++) {
+		angle = parse_palm_pressure_property(tests[i].tag);
+		ck_assert_int_eq(angle, tests[i].expected_value);
+	}
 }
 END_TEST
 
@@ -1086,6 +1118,77 @@ START_TEST(safe_atoi_test)
 	for (int i = 0; tests[i].str != NULL; i++) {
 		v = 0xad;
 		success = safe_atoi(tests[i].str, &v);
+		ck_assert(success == tests[i].success);
+		if (success)
+			ck_assert_int_eq(v, tests[i].val);
+		else
+			ck_assert_int_eq(v, 0xad);
+	}
+}
+END_TEST
+
+START_TEST(safe_atoi_base_16_test)
+{
+	struct atoi_test tests[] = {
+		{ "10", true, 0x10 },
+		{ "20", true, 0x20 },
+		{ "-1", true, -1 },
+		{ "0x10", true, 0x10 },
+		{ "0xff", true, 0xff },
+		{ "abc", true, 0xabc },
+		{ "-10", true, -0x10 },
+		{ "0x0", true, 0 },
+		{ "0", true, 0 },
+		{ "0x-99", false, 0 },
+		{ "0xak", false, 0 },
+		{ "0x", false, 0 },
+		{ "x10", false, 0 },
+		{ NULL, false, 0 }
+	};
+
+	int v;
+	bool success;
+
+	for (int i = 0; tests[i].str != NULL; i++) {
+		v = 0xad;
+		success = safe_atoi_base(tests[i].str, &v, 16);
+		ck_assert(success == tests[i].success);
+		if (success)
+			ck_assert_int_eq(v, tests[i].val);
+		else
+			ck_assert_int_eq(v, 0xad);
+	}
+}
+END_TEST
+
+START_TEST(safe_atoi_base_8_test)
+{
+	struct atoi_test tests[] = {
+		{ "7", true, 07 },
+		{ "10", true, 010 },
+		{ "20", true, 020 },
+		{ "-1", true, -1 },
+		{ "010", true, 010 },
+		{ "0ff", false, 0 },
+		{ "abc", false, 0},
+		{ "0xabc", false, 0},
+		{ "-10", true, -010 },
+		{ "0", true, 0 },
+		{ "00", true, 0 },
+		{ "0x0", false, 0 },
+		{ "0x-99", false, 0 },
+		{ "0xak", false, 0 },
+		{ "0x", false, 0 },
+		{ "x10", false, 0 },
+		{ NULL, false, 0 }
+	};
+
+	int v;
+	bool success;
+
+	for (int i = 0; tests[i].str != NULL; i++) {
+		v = 0xad;
+		success = safe_atoi_base(tests[i].str, &v, 8);
 		ck_assert(success == tests[i].success);
 		if (success)
 			ck_assert_int_eq(v, tests[i].val);
@@ -1280,6 +1383,114 @@ START_TEST(library_version)
 }
 END_TEST
 
+static void timer_offset_warning(struct libinput *libinput,
+				 enum libinput_log_priority priority,
+				 const char *format,
+				 va_list args)
+{
+	int *warning_triggered = (int*)libinput_get_user_data(libinput);
+
+	if (priority == LIBINPUT_LOG_PRIORITY_ERROR &&
+	    strstr(format, "offset negative"))
+		(*warning_triggered)++;
+}
+
+START_TEST(timer_offset_bug_warning)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput *li = dev->libinput;
+	int warning_triggered = 0;
+
+	litest_enable_tap(dev->libinput_device);
+	litest_drain_events(li);
+
+	litest_touch_down(dev, 0, 50, 50);
+	litest_touch_up(dev, 0);
+
+	litest_timeout_tap();
+
+	libinput_set_user_data(li, &warning_triggered);
+	libinput_log_set_handler(li, timer_offset_warning);
+	libinput_dispatch(li);
+
+	/* triggered for touch down and touch up */
+	ck_assert_int_eq(warning_triggered, 2);
+	litest_restore_log_handler(li);
+}
+END_TEST
+
+START_TEST(timer_flush)
+{
+	struct libinput *li;
+	struct litest_device *keyboard, *touchpad;
+
+	li = litest_create_context();
+
+	touchpad = litest_add_device(li, LITEST_SYNAPTICS_TOUCHPAD);
+	litest_enable_tap(touchpad->libinput_device);
+	libinput_dispatch(li);
+	keyboard = litest_add_device(li, LITEST_KEYBOARD);
+	libinput_dispatch(li);
+	litest_drain_events(li);
+
+	/* make sure tapping works */
+	litest_touch_down(touchpad, 0, 50, 50);
+	litest_touch_up(touchpad, 0);
+	libinput_dispatch(li);
+	litest_timeout_tap();
+	libinput_dispatch(li);
+
+	litest_assert_button_event(li, BTN_LEFT,
+				   LIBINPUT_BUTTON_STATE_PRESSED);
+	litest_assert_button_event(li, BTN_LEFT,
+				   LIBINPUT_BUTTON_STATE_RELEASED);
+	litest_assert_empty_queue(li);
+
+	/* make sure dwt-tap is ignored */
+	litest_keyboard_key(keyboard, KEY_A, true);
+	litest_keyboard_key(keyboard, KEY_A, false);
+	libinput_dispatch(li);
+	litest_touch_down(touchpad, 0, 50, 50);
+	litest_touch_up(touchpad, 0);
+	libinput_dispatch(li);
+	litest_timeout_tap();
+	libinput_dispatch(li);
+	litest_assert_only_typed_events(li, LIBINPUT_EVENT_KEYBOARD_KEY);
+
+	/* Ingore 'timer offset negative' warnings */
+	litest_disable_log_handler(li);
+
+	/* now mess with the timing
+	   - send a key event
+	   - expire dwt
+	   - send a tap
+	   and then call libinput_dispatch(). libinput should notice that
+	   the tap event came in after the timeout and thus acknowledge the
+	   tap.
+	 */
+	litest_keyboard_key(keyboard, KEY_A, true);
+	litest_keyboard_key(keyboard, KEY_A, false);
+	litest_timeout_dwt_long();
+	litest_touch_down(touchpad, 0, 50, 50);
+	litest_touch_up(touchpad, 0);
+	libinput_dispatch(li);
+	litest_timeout_tap();
+	libinput_dispatch(li);
+	litest_restore_log_handler(li);
+
+	litest_assert_key_event(li, KEY_A, LIBINPUT_KEY_STATE_PRESSED);
+	litest_assert_key_event(li, KEY_A, LIBINPUT_KEY_STATE_RELEASED);
+	litest_assert_button_event(li, BTN_LEFT,
+				   LIBINPUT_BUTTON_STATE_PRESSED);
+	litest_assert_button_event(li, BTN_LEFT,
+				   LIBINPUT_BUTTON_STATE_RELEASED);
+
+	litest_delete_device(keyboard);
+	litest_delete_device(touchpad);
+	libinput_unref(li);
+}
+END_TEST
+
 void
 litest_setup_tests_misc(void)
 {
@@ -1298,6 +1509,9 @@ litest_setup_tests_misc(void)
 	litest_add_no_device("context:refcount", context_ref_counting);
 	litest_add_no_device("config:status string", config_status_string);
 
+	litest_add_for_device("timer:offset-warning", timer_offset_bug_warning, LITEST_SYNAPTICS_TOUCHPAD);
+	litest_add_no_device("timer:flush", timer_flush);
+
 	litest_add_no_device("misc:matrix", matrix_helpers);
 	litest_add_no_device("misc:ratelimit", ratelimit_helpers);
 	litest_add_no_device("misc:parser", dpi_parser);
@@ -1307,8 +1521,11 @@ litest_setup_tests_misc(void)
 	litest_add_no_device("misc:parser", dimension_prop_parser);
 	litest_add_no_device("misc:parser", reliability_prop_parser);
 	litest_add_no_device("misc:parser", calibration_prop_parser);
-	litest_add_no_device("misc:parser", pressure_range_prop_parser);
+	litest_add_no_device("misc:parser", range_prop_parser);
+	litest_add_no_device("misc:parser", palm_pressure_parser);
 	litest_add_no_device("misc:parser", safe_atoi_test);
+	litest_add_no_device("misc:parser", safe_atoi_base_16_test);
+	litest_add_no_device("misc:parser", safe_atoi_base_8_test);
 	litest_add_no_device("misc:parser", safe_atod_test);
 	litest_add_no_device("misc:parser", strsplit_test);
 	litest_add_no_device("misc:time", time_conversion);

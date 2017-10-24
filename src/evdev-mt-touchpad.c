@@ -35,8 +35,9 @@
 #define DEFAULT_KEYBOARD_ACTIVITY_TIMEOUT_2 ms2us(500)
 #define THUMB_MOVE_TIMEOUT ms2us(300)
 #define FAKE_FINGER_OVERFLOW (1 << 7)
+#define THUMB_IGNORE_SPEED_THRESHOLD 20 /* mm/s */
 
-static inline struct device_coords *
+static inline struct tp_history_point*
 tp_motion_history_offset(struct tp_touch *t, int offset)
 {
 	int offset_index =
@@ -83,6 +84,41 @@ tp_filter_motion_unaccelerated(struct tp_dispatch *tp,
 }
 
 static inline void
+tp_calculate_motion_speed(struct tp_dispatch *tp, struct tp_touch *t)
+{
+	const struct tp_history_point *last;
+	struct device_coords delta;
+	struct phys_coords mm;
+	double distance;
+	double speed;
+
+	/* This doesn't kick in until we have at least 4 events in the
+	 * motion history. As a side-effect, this automatically handles the
+	 * 2fg scroll where a finger is down and moving fast before the
+	 * other finger comes down for the scroll.
+	 *
+	 * We do *not* reset the speed to 0 here though. The motion history
+	 * is reset whenever a new finger is down, so we'd be resetting the
+	 * speed and failing.
+	 */
+	if (t->history.count < 4)
+		return;
+
+	/* TODO: we probably need a speed history here so we can average
+	 * across a few events */
+	last = tp_motion_history_offset(t, 1);
+	delta.x = abs(t->point.x - last->point.x);
+	delta.y = abs(t->point.y - last->point.y);
+	mm = evdev_device_unit_delta_to_mm(tp->device, &delta);
+
+	distance = length_in_mm(mm);
+	speed = distance/(t->time - last->time); /* mm/us */
+	speed *= 1000000; /* mm/s */
+
+	t->speed.last_speed = speed;
+}
+
+static inline void
 tp_motion_history_push(struct tp_touch *t)
 {
 	int motion_index = (t->history.index + 1) % TOUCHPAD_HISTORY_LENGTH;
@@ -90,7 +126,8 @@ tp_motion_history_push(struct tp_touch *t)
 	if (t->history.count < TOUCHPAD_HISTORY_LENGTH)
 		t->history.count++;
 
-	t->history.samples[motion_index] = t->point;
+	t->history.samples[motion_index].point = t->point;
+	t->history.samples[motion_index].time = t->time;
 	t->history.index = motion_index;
 }
 
@@ -218,6 +255,8 @@ tp_new_touch(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	t->state = TOUCH_HOVERING;
 	t->pinned.is_pinned = false;
 	t->time = time;
+	t->speed.last_speed = 0;
+	t->speed.exceeded_count = 0;
 	tp->queued |= TOUCHPAD_EVENT_MOTION;
 }
 
@@ -293,10 +332,10 @@ tp_get_delta(struct tp_touch *t)
 	if (t->history.count <= 1)
 		return zero;
 
-	delta.x = tp_motion_history_offset(t, 0)->x -
-		  tp_motion_history_offset(t, 1)->x;
-	delta.y = tp_motion_history_offset(t, 0)->y -
-		  tp_motion_history_offset(t, 1)->y;
+	delta.x = tp_motion_history_offset(t, 0)->point.x -
+		  tp_motion_history_offset(t, 1)->point.x;
+	delta.y = tp_motion_history_offset(t, 0)->point.y -
+		  tp_motion_history_offset(t, 1)->point.y;
 
 	return tp_normalize_delta(t->tp, delta);
 }
@@ -345,6 +384,16 @@ tp_process_absolute(struct tp_dispatch *tp,
 	case ABS_MT_TOOL_TYPE:
 		t->is_tool_palm = e->value == MT_TOOL_PALM;
 		t->time = time;
+		t->dirty = true;
+		tp->queued |= TOUCHPAD_EVENT_OTHERAXIS;
+		break;
+	case ABS_MT_TOUCH_MAJOR:
+		t->major = e->value;
+		t->dirty = true;
+		tp->queued |= TOUCHPAD_EVENT_OTHERAXIS;
+		break;
+	case ABS_MT_TOUCH_MINOR:
+		t->minor = e->value;
 		t->dirty = true;
 		tp->queued |= TOUCHPAD_EVENT_OTHERAXIS;
 		break;
@@ -550,14 +599,45 @@ tp_touch_active(const struct tp_dispatch *tp, const struct tp_touch *t)
 		tp_edge_scroll_touch_active(tp, t);
 }
 
+static inline bool
+tp_palm_was_in_side_edge(const struct tp_dispatch *tp, const struct tp_touch *t)
+{
+	return t->palm.first.x < tp->palm.left_edge ||
+	       t->palm.first.x > tp->palm.right_edge;
+}
+
+static inline bool
+tp_palm_was_in_top_edge(const struct tp_dispatch *tp, const struct tp_touch *t)
+{
+	return t->palm.first.y < tp->palm.upper_edge;
+}
+
+static inline bool
+tp_palm_in_side_edge(const struct tp_dispatch *tp, const struct tp_touch *t)
+{
+	return t->point.x < tp->palm.left_edge ||
+	       t->point.x > tp->palm.right_edge;
+}
+
+static inline bool
+tp_palm_in_top_edge(const struct tp_dispatch *tp, const struct tp_touch *t)
+{
+	return t->point.y < tp->palm.upper_edge;
+}
+
+static inline bool
+tp_palm_in_edge(const struct tp_dispatch *tp, const struct tp_touch *t)
+{
+	return tp_palm_in_side_edge(tp, t) || tp_palm_in_top_edge(tp, t);
+}
+
 bool
 tp_palm_tap_is_palm(const struct tp_dispatch *tp, const struct tp_touch *t)
 {
 	if (t->state != TOUCH_BEGIN)
 		return false;
 
-	if (t->point.x > tp->palm.left_edge &&
-	    t->point.x < tp->palm.right_edge)
+	if (!tp_palm_in_edge(tp, t))
 		return false;
 
 	evdev_log_debug(tp->device, "palm: palm-tap detected\n");
@@ -654,16 +734,22 @@ tp_palm_detect_move_out_of_edge(struct tp_dispatch *tp,
 				uint64_t time)
 {
 	const int PALM_TIMEOUT = ms2us(200);
-	const int DIRECTIONS = NE|E|SE|SW|W|NW;
+	int directions = 0;
 	struct device_float_coords delta;
 	int dirs;
 
-	if (time < t->palm.time + PALM_TIMEOUT &&
-	    (t->point.x > tp->palm.left_edge && t->point.x < tp->palm.right_edge)) {
-		delta = device_delta(t->point, t->palm.first);
-		dirs = phys_get_direction(tp_phys_delta(tp, delta));
-		if ((dirs & DIRECTIONS) && !(dirs & ~DIRECTIONS))
-			return true;
+	if (time < t->palm.time + PALM_TIMEOUT && !tp_palm_in_edge(tp, t)) {
+		if (tp_palm_was_in_side_edge(tp, t))
+			directions = NE|E|SE|SW|W|NW;
+		else if (tp_palm_was_in_top_edge(tp, t))
+			directions = S|SE|SW;
+
+		if (directions) {
+			delta = device_delta(t->point, t->palm.first);
+			dirs = phys_get_direction(tp_phys_delta(tp, delta));
+			if ((dirs & directions) && !(dirs & ~directions))
+				return true;
+		}
 	}
 
 	return false;
@@ -699,6 +785,31 @@ tp_palm_detect_multifinger(struct tp_dispatch *tp, struct tp_touch *t, uint64_t 
 }
 
 static inline bool
+tp_palm_detect_touch_size_triggered(struct tp_dispatch *tp,
+				    struct tp_touch *t,
+				    uint64_t time)
+{
+	if (!tp->palm.use_size)
+		return false;
+
+	/* If a finger size is large enough for palm, we stick with that and
+	 * force the user to release and reset the finger */
+	if (t->palm.state != PALM_NONE && t->palm.state != PALM_TOUCH_SIZE)
+		return false;
+
+	if (t->major > tp->palm.size_threshold ||
+	    t->minor > tp->palm.size_threshold) {
+		if (t->palm.state != PALM_TOUCH_SIZE)
+			evdev_log_debug(tp->device,
+					"palm: touch size exceeded\n");
+		t->palm.state = PALM_TOUCH_SIZE;
+		return true;
+	}
+
+	return false;
+}
+
+static inline bool
 tp_palm_detect_edge(struct tp_dispatch *tp,
 		    struct tp_touch *t,
 		    uint64_t time)
@@ -725,8 +836,7 @@ tp_palm_detect_edge(struct tp_dispatch *tp,
 
 	/* palm must start in exclusion zone, it's ok to move into
 	   the zone without being a palm */
-	if (t->state != TOUCH_BEGIN ||
-	    (t->point.x > tp->palm.left_edge && t->point.x < tp->palm.right_edge))
+	if (t->state != TOUCH_BEGIN || !tp_palm_in_edge(tp, t))
 		return false;
 
 	/* don't detect palm in software button areas, it's
@@ -746,11 +856,32 @@ tp_palm_detect_edge(struct tp_dispatch *tp,
 	return true;
 }
 
+static bool
+tp_palm_detect_pressure_triggered(struct tp_dispatch *tp,
+				  struct tp_touch *t,
+				  uint64_t time)
+{
+	if (!tp->palm.use_pressure)
+		return false;
+
+	if (t->palm.state != PALM_NONE &&
+	    t->palm.state != PALM_PRESSURE)
+		return false;
+
+	if (t->pressure > tp->palm.pressure_threshold)
+		t->palm.state = PALM_PRESSURE;
+
+	return t->palm.state == PALM_PRESSURE;
+}
+
 static void
 tp_palm_detect(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 {
 	const char *palm_state;
 	enum touch_palm_state oldstate = t->palm.state;
+
+	if (tp_palm_detect_pressure_triggered(tp, t, time))
+		goto out;
 
 	if (tp_palm_detect_dwt_triggered(tp, t, time))
 		goto out;
@@ -761,11 +892,24 @@ tp_palm_detect(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	if (tp_palm_detect_tool_triggered(tp, t, time))
 		goto out;
 
+	if (tp_palm_detect_touch_size_triggered(tp, t, time))
+		goto out;
+
 	if (tp_palm_detect_edge(tp, t, time))
+		goto out;
+
+	/* Pressure is highest priority because it cannot be released and
+	 * overrides all other checks. So we check once before anything else
+	 * in case pressure triggers on a non-palm touch. And again after
+	 * everything in case one of the others released but we have a
+	 * pressure trigger now.
+	 */
+	if (tp_palm_detect_pressure_triggered(tp, t, time))
 		goto out;
 
 	return;
 out:
+
 	if (oldstate == t->palm.state)
 		return;
 
@@ -781,6 +925,12 @@ out:
 		break;
 	case PALM_TOOL_PALM:
 		palm_state = "tool-palm";
+		break;
+	case PALM_PRESSURE:
+		palm_state = "pressure";
+		break;
+	case PALM_TOUCH_SIZE:
+		palm_state = "touch size";
 		break;
 	case PALM_NONE:
 	default:
@@ -946,6 +1096,45 @@ tp_unhover_pressure(struct tp_dispatch *tp, uint64_t time)
 }
 
 static void
+tp_unhover_size(struct tp_dispatch *tp, uint64_t time)
+{
+	struct tp_touch *t;
+	int low = tp->touch_size.low,
+	    high = tp->touch_size.high;
+	int i;
+
+	/* We require 5 slots for size handling, so we don't need to care
+	 * about fake touches here */
+
+	for (i = 0; i < (int)tp->num_slots; i++) {
+		t = tp_get_touch(tp, i);
+
+		if (t->state == TOUCH_NONE)
+			continue;
+
+		if (!t->dirty)
+			continue;
+
+		if (t->state == TOUCH_HOVERING) {
+			if ((t->major > high && t->minor > low) ||
+			    (t->major > low && t->minor > high)) {
+				evdev_log_debug(tp->device,
+						"touch-size: begin touch\n");
+				/* avoid jumps when landing a finger */
+				tp_motion_history_reset(t);
+				tp_begin_touch(tp, t, time);
+			}
+		} else {
+			if (t->major < low || t->minor < low) {
+				evdev_log_debug(tp->device,
+						"touch-size: end touch\n");
+				tp_end_touch(tp, t, time);
+			}
+		}
+	}
+}
+
+static void
 tp_unhover_fake_touches(struct tp_dispatch *tp, uint64_t time)
 {
 	struct tp_touch *t;
@@ -1007,6 +1196,8 @@ tp_unhover_touches(struct tp_dispatch *tp, uint64_t time)
 {
 	if (tp->pressure.use_pressure)
 		tp_unhover_pressure(tp, time);
+	else if (tp->touch_size.use_touch_size)
+		tp_unhover_size(tp, time);
 	else
 		tp_unhover_fake_touches(tp, time);
 
@@ -1101,9 +1292,10 @@ tp_need_motion_history_reset(struct tp_dispatch *tp)
 static bool
 tp_detect_jumps(const struct tp_dispatch *tp, struct tp_touch *t)
 {
-	struct device_coords *last, delta;
+	struct device_coords delta;
 	struct phys_coords mm;
 	const int JUMP_THRESHOLD_MM = 20;
+	struct tp_history_point *last;
 
 	/* We haven't seen pointer jumps on Wacom tablets yet, so exclude
 	 * those.
@@ -1117,11 +1309,52 @@ tp_detect_jumps(const struct tp_dispatch *tp, struct tp_touch *t)
 	/* called before tp_motion_history_push, so offset 0 is the most
 	 * recent coordinate */
 	last = tp_motion_history_offset(t, 0);
-	delta.x = abs(t->point.x - last->x);
-	delta.y = abs(t->point.y - last->y);
+	delta.x = abs(t->point.x - last->point.x);
+	delta.y = abs(t->point.y - last->point.y);
 	mm = evdev_device_unit_delta_to_mm(tp->device, &delta);
 
 	return hypot(mm.x, mm.y) > JUMP_THRESHOLD_MM;
+}
+
+static void
+tp_detect_thumb_while_moving(struct tp_dispatch *tp)
+{
+	struct tp_touch *t;
+	struct tp_touch *first = NULL,
+			*second = NULL;
+	struct device_coords distance;
+	struct phys_coords mm;
+
+	tp_for_each_touch(tp, t) {
+		if (t->state != TOUCH_BEGIN)
+			first = t;
+		else
+			second = t;
+
+		if (first && second)
+			break;
+	}
+
+	assert(first);
+	assert(second);
+
+	if (tp->scroll.method == LIBINPUT_CONFIG_SCROLL_2FG) {
+		/* If the second finger comes down next to the other one, we
+		 * assume this is a scroll motion.
+		 */
+		distance.x = abs(first->point.x - second->point.x);
+		distance.y = abs(first->point.y - second->point.y);
+		mm = evdev_device_unit_delta_to_mm(tp->device, &distance);
+
+		if (mm.x <= 25 && mm.y <= 15)
+			return;
+	}
+
+	/* Finger are too far apart or 2fg scrolling is disabled, mark
+	 * second finger as thumb */
+	evdev_log_debug(tp->device,
+			"touch is speed-based thumb\n");
+	second->thumb.state = THUMB_STATE_YES;
 }
 
 static void
@@ -1130,6 +1363,8 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 	struct tp_touch *t;
 	bool restart_filter = false;
 	bool want_motion_reset;
+	bool have_new_touch = false;
+	unsigned int speed_exceeded_count = 0;
 
 	tp_process_fake_touches(tp, time);
 	tp_unhover_touches(tp, time);
@@ -1146,8 +1381,15 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 			t->quirks.reset_motion_history = false;
 		}
 
-		if (!t->dirty)
+		if (!t->dirty) {
+			/* A non-dirty touch must be below the speed limit */
+			if (t->speed.exceeded_count > 0)
+				t->speed.exceeded_count--;
+
+			speed_exceeded_count = max(speed_exceeded_count,
+						   t->speed.exceeded_count);
 			continue;
+		}
 
 		if (tp_detect_jumps(tp, t)) {
 			if (!tp->semi_mt)
@@ -1164,11 +1406,44 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 		tp_motion_hysteresis(tp, t);
 		tp_motion_history_push(t);
 
+		/* Touch speed handling: if we'are above the threshold,
+		 * count each event that we're over the threshold up to 10
+		 * events. Count down when we are below the speed.
+		 *
+		 * Take the touch with the highest speed excess, if it is
+		 * above a certain threshold (5, see below), assume a
+		 * dropped finger is a thumb.
+		 *
+		 * Yes, this relies on the touchpad to keep sending us
+		 * events even if the finger doesn't move, otherwise we
+		 * never count down. Let's see how far we get with that.
+		 */
+		if (t->speed.last_speed > THUMB_IGNORE_SPEED_THRESHOLD) {
+			if (t->speed.exceeded_count < 10)
+				t->speed.exceeded_count++;
+		} else if (t->speed.exceeded_count > 0) {
+				t->speed.exceeded_count--;
+		}
+
+		speed_exceeded_count = max(speed_exceeded_count,
+					   t->speed.exceeded_count);
+
+		tp_calculate_motion_speed(tp, t);
+
 		tp_unpin_finger(tp, t);
 
-		if (t->state == TOUCH_BEGIN)
+		if (t->state == TOUCH_BEGIN) {
+			have_new_touch = true;
 			restart_filter = true;
+		}
 	}
+
+	/* If we have one touch that exceeds the speed and we get a new
+	 * touch down while doing that, the second touch is a thumb */
+	if (have_new_touch &&
+	    tp->nfingers_down == 2 &&
+	    speed_exceeded_count > 5)
+		tp_detect_thumb_while_moving(tp);
 
 	if (restart_filter)
 		filter_restart(tp->device->pointer.filter, tp, time);
@@ -1327,7 +1602,11 @@ tp_remove_sendevents(struct tp_dispatch *tp)
 
 	if (tp->lid_switch.lid_switch)
 		libinput_device_remove_event_listener(
-					&tp->lid_switch.lid_switch_listener);
+					&tp->lid_switch.listener);
+
+	if (tp->tablet_mode_switch.tablet_mode_switch)
+		libinput_device_remove_event_listener(
+					&tp->tablet_mode_switch.listener);
 }
 
 static void
@@ -1347,6 +1626,10 @@ tp_interface_destroy(struct evdev_dispatch *dispatch)
 {
 	struct tp_dispatch *tp = tp_dispatch(dispatch);
 
+	libinput_timer_destroy(&tp->palm.trackpoint_timer);
+	libinput_timer_destroy(&tp->dwt.keyboard_timer);
+	libinput_timer_destroy(&tp->tap.timer);
+	libinput_timer_destroy(&tp->gesture.finger_count_switch_timer);
 	free(tp->touches);
 	free(tp);
 }
@@ -1412,6 +1695,54 @@ tp_interface_suspend(struct evdev_dispatch *dispatch,
 	tp_clear_state(tp);
 }
 
+static inline void
+tp_sync_touch(struct tp_dispatch *tp,
+	      struct evdev_device *device,
+	      struct tp_touch *t,
+	      int slot)
+{
+	struct libevdev *evdev = device->evdev;
+
+	if (!libevdev_fetch_slot_value(evdev,
+				       slot,
+				       ABS_MT_POSITION_X,
+				       &t->point.x))
+		t->point.x = libevdev_get_event_value(evdev, EV_ABS, ABS_X);
+	if (!libevdev_fetch_slot_value(evdev,
+				       slot,
+				       ABS_MT_POSITION_Y,
+				       &t->point.y))
+		t->point.y = libevdev_get_event_value(evdev, EV_ABS, ABS_Y);
+
+	if (!libevdev_fetch_slot_value(evdev,
+				       slot,
+				       ABS_MT_PRESSURE,
+				       &t->pressure))
+		t->pressure = libevdev_get_event_value(evdev,
+						       EV_ABS,
+						       ABS_PRESSURE);
+
+	libevdev_fetch_slot_value(evdev,
+				  slot,
+				  ABS_MT_TOUCH_MAJOR,
+				  &t->major);
+	libevdev_fetch_slot_value(evdev,
+				  slot,
+				  ABS_MT_TOUCH_MINOR,
+				  &t->minor);
+}
+
+static void
+tp_sync_slots(struct tp_dispatch *tp,
+	      struct evdev_device *device)
+{
+	/* Always sync the first touch so we get ABS_X/Y synced on
+	 * single-touch touchpads */
+	tp_sync_touch(tp, device, &tp->touches[0], 0);
+	for (unsigned int i = 1; i < tp->num_slots; i++)
+		tp_sync_touch(tp, device, &tp->touches[i], i);
+}
+
 static void
 tp_resume(struct tp_dispatch *tp, struct evdev_device *device)
 {
@@ -1424,6 +1755,8 @@ tp_resume(struct tp_dispatch *tp, struct evdev_device *device)
 	} else {
 		evdev_device_resume(device);
 	}
+
+	tp_sync_slots(tp, device);
 }
 
 #define NO_EXCLUDED_DEVICE NULL
@@ -1681,23 +2014,34 @@ tp_pair_trackpoint(struct evdev_device *touchpad,
 }
 
 static void
-tp_lid_switch_event(uint64_t time, struct libinput_event *event, void *data)
+tp_switch_event(uint64_t time, struct libinput_event *event, void *data)
 {
 	struct tp_dispatch *tp = data;
 	struct libinput_event_switch *swev;
+	const char *which = NULL;
 
 	if (libinput_event_get_type(event) != LIBINPUT_EVENT_SWITCH_TOGGLE)
 		return;
 
 	swev = libinput_event_get_switch_event(event);
+
+	switch (libinput_event_switch_get_switch(swev)) {
+	case LIBINPUT_SWITCH_LID:
+		which = "lid";
+		break;
+	case LIBINPUT_SWITCH_TABLET_MODE:
+		which = "tablet-mode";
+		break;
+	}
+
 	switch (libinput_event_switch_get_switch_state(swev)) {
 	case LIBINPUT_SWITCH_STATE_OFF:
 		tp_resume_conditional(tp, tp->device, NO_EXCLUDED_DEVICE);
-		evdev_log_debug(tp->device, "lid: resume touchpad\n");
+		evdev_log_debug(tp->device, "%s: resume touchpad\n", which);
 		break;
 	case LIBINPUT_SWITCH_STATE_ON:
 		tp_suspend(tp, tp->device);
-		evdev_log_debug(tp->device, "lid: suspend touchpad\n");
+		evdev_log_debug(tp->device, "%s: suspend touchpad\n", which);
 		break;
 	}
 }
@@ -1718,9 +2062,38 @@ tp_pair_lid_switch(struct evdev_device *touchpad,
 				lid_switch->devname);
 
 		libinput_device_add_event_listener(&lid_switch->base,
-					&tp->lid_switch.lid_switch_listener,
-					tp_lid_switch_event, tp);
+						   &tp->lid_switch.listener,
+						   tp_switch_event, tp);
 		tp->lid_switch.lid_switch = lid_switch;
+	}
+}
+
+static void
+tp_pair_tablet_mode_switch(struct evdev_device *touchpad,
+			   struct evdev_device *tablet_mode_switch)
+{
+	struct tp_dispatch *tp = (struct tp_dispatch*)touchpad->dispatch;
+
+	if ((tablet_mode_switch->tags & EVDEV_TAG_TABLET_MODE_SWITCH) == 0)
+		return;
+
+	if (tp->tablet_mode_switch.tablet_mode_switch)
+		return;
+
+	evdev_log_debug(touchpad,
+			"tablet_mode_switch: activated for %s<->%s\n",
+			touchpad->devname,
+			tablet_mode_switch->devname);
+
+	libinput_device_add_event_listener(&tablet_mode_switch->base,
+				&tp->tablet_mode_switch.listener,
+				tp_switch_event, tp);
+	tp->tablet_mode_switch.tablet_mode_switch = tablet_mode_switch;
+
+	if (evdev_device_switch_get_state(tablet_mode_switch,
+					  LIBINPUT_SWITCH_TABLET_MODE)
+		    == LIBINPUT_SWITCH_STATE_ON) {
+		tp_suspend(tp, touchpad);
 	}
 }
 
@@ -1733,6 +2106,7 @@ tp_interface_device_added(struct evdev_device *device,
 	tp_pair_trackpoint(device, added_device);
 	tp_dwt_pair_keyboard(device, added_device);
 	tp_pair_lid_switch(device, added_device);
+	tp_pair_tablet_mode_switch(device, added_device);
 
 	if (tp->sendevents.current_mode !=
 	    LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE)
@@ -1769,8 +2143,14 @@ tp_interface_device_removed(struct evdev_device *device,
 
 	if (removed_device == tp->lid_switch.lid_switch) {
 		libinput_device_remove_event_listener(
-					&tp->lid_switch.lid_switch_listener);
+					&tp->lid_switch.listener);
 		tp->lid_switch.lid_switch = NULL;
+	}
+
+	if (removed_device == tp->tablet_mode_switch.tablet_mode_switch) {
+		libinput_device_remove_event_listener(
+					&tp->tablet_mode_switch.listener);
+		tp->tablet_mode_switch.tablet_mode_switch = NULL;
 	}
 
 	/* removed_device is still in the device list at this point, so we
@@ -1871,16 +2251,17 @@ tp_interface_toggle_touch(struct evdev_dispatch *dispatch,
 }
 
 static struct evdev_dispatch_interface tp_interface = {
-	tp_interface_process,
-	tp_interface_suspend,
-	tp_interface_remove,
-	tp_interface_destroy,
-	tp_interface_device_added,
-	tp_interface_device_removed,
-	tp_interface_device_removed, /* device_suspended, treat as remove */
-	tp_interface_device_added,   /* device_resumed, treat as add */
-	NULL,                        /* post_added */
-	tp_interface_toggle_touch,
+	.process = tp_interface_process,
+	.suspend = tp_interface_suspend,
+	.remove = tp_interface_remove,
+	.destroy = tp_interface_destroy,
+	.device_added = tp_interface_device_added,
+	.device_removed = tp_interface_device_removed,
+	.device_suspended = tp_interface_device_removed, /* treat as remove */
+	.device_resumed = tp_interface_device_added,   /* treat as add */
+	.post_added = NULL,
+	.toggle_touch = tp_interface_toggle_touch,
+	.get_switch_state = NULL,
 };
 
 static void
@@ -1889,34 +2270,6 @@ tp_init_touch(struct tp_dispatch *tp,
 {
 	t->tp = tp;
 	t->has_ended = true;
-}
-
-static void
-tp_sync_touch(struct tp_dispatch *tp,
-	      struct evdev_device *device,
-	      struct tp_touch *t,
-	      int slot)
-{
-	struct libevdev *evdev = device->evdev;
-
-	if (!libevdev_fetch_slot_value(evdev,
-				       slot,
-				       ABS_MT_POSITION_X,
-				       &t->point.x))
-		t->point.x = libevdev_get_event_value(evdev, EV_ABS, ABS_X);
-	if (!libevdev_fetch_slot_value(evdev,
-				       slot,
-				       ABS_MT_POSITION_Y,
-				       &t->point.y))
-		t->point.y = libevdev_get_event_value(evdev, EV_ABS, ABS_Y);
-
-	if (!libevdev_fetch_slot_value(evdev,
-				       slot,
-				       ABS_MT_PRESSURE,
-				       &t->pressure))
-		t->pressure = libevdev_get_event_value(evdev,
-						       EV_ABS,
-						       ABS_PRESSURE);
 }
 
 static inline void
@@ -1997,18 +2350,12 @@ tp_init_slots(struct tp_dispatch *tp,
 	}
 
 	tp->ntouches = max(tp->num_slots, n_btn_tool_touches);
-	tp->touches = calloc(tp->ntouches, sizeof(struct tp_touch));
-	if (!tp->touches)
-		return false;
+	tp->touches = zalloc(tp->ntouches * sizeof(struct tp_touch));
 
 	for (i = 0; i < tp->ntouches; i++)
 		tp_init_touch(tp, &tp->touches[i]);
 
-	/* Always sync the first touch so we get ABS_X/Y synced on
-	 * single-touch touchpads */
-	tp_sync_touch(tp, device, &tp->touches[0], 0);
-	for (i = 1; i < tp->num_slots; i++)
-		tp_sync_touch(tp, device, &tp->touches[i], i);
+	tp_sync_slots(tp, device);
 
 	/* Some touchpads don't reset BTN_TOOL_FINGER on touch up and only
 	 * change to/from it when BTN_TOOL_DOUBLETAP is set. This causes us
@@ -2069,8 +2416,10 @@ tp_init_accel(struct tp_dispatch *tp)
 	if (tp->device->model_flags & EVDEV_MODEL_LENOVO_X230 ||
 	    tp->device->model_flags & EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81)
 		filter = create_pointer_accelerator_filter_lenovo_x230(tp->device->dpi);
+	else if (libevdev_get_id_bustype(device->evdev) == BUS_BLUETOOTH)
+		filter = create_pointer_accelerator_filter_touchpad(device->dpi, ms2us(50), ms2us(10));
 	else
-		filter = create_pointer_accelerator_filter_touchpad(tp->device->dpi);
+		filter = create_pointer_accelerator_filter_touchpad(device->dpi, 0, 0);
 
 	if (!filter)
 		return false;
@@ -2283,10 +2632,14 @@ tp_init_palmdetect_edge(struct tp_dispatch *tp,
 	struct phys_coords mm = { 0.0, 0.0 };
 	struct device_coords edges;
 
+	if (device->tags & EVDEV_TAG_EXTERNAL_TOUCHPAD &&
+	    !tp_is_tpkb_combo_below(device))
+		return;
+
 	evdev_device_get_size(device, &width, &height);
 
-	/* Enable palm detection on touchpads >= 70 mm. Anything smaller
-	   probably won't need it, until we find out it does */
+	/* Enable edge palm detection on touchpads >= 70 mm. Anything
+	   smaller probably won't need it, until we find out it does */
 	if (width < 70.0)
 		return;
 
@@ -2298,6 +2651,73 @@ tp_init_palmdetect_edge(struct tp_dispatch *tp,
 	mm.x = width * 0.92;
 	edges = evdev_device_mm_to_units(device, &mm);
 	tp->palm.right_edge = edges.x;
+
+	if (!tp->buttons.has_topbuttons) {
+		/* top edge is 5% of the height */
+		mm.y = height * 0.05;
+		edges = evdev_device_mm_to_units(device, &mm);
+		tp->palm.upper_edge = edges.y;
+	}
+}
+
+static int
+tp_read_palm_pressure_prop(struct tp_dispatch *tp,
+			   const struct evdev_device *device)
+{
+	const char *prop;
+	int threshold;
+	const int default_palm_threshold = 130;
+
+	prop = NULL;
+	if (!prop)
+		return default_palm_threshold;
+
+	threshold = parse_palm_pressure_property(prop);
+
+	return threshold > 0 ? threshold : default_palm_threshold;
+}
+
+static inline void
+tp_init_palmdetect_pressure(struct tp_dispatch *tp,
+			    struct evdev_device *device)
+{
+	if (!libevdev_has_event_code(device->evdev, EV_ABS, ABS_MT_PRESSURE)) {
+		tp->palm.use_pressure = false;
+		return;
+	}
+
+	tp->palm.pressure_threshold = tp_read_palm_pressure_prop(tp, device);
+	tp->palm.use_pressure = true;
+
+	evdev_log_debug(device,
+			"palm: pressure threshold is %d\n",
+			tp->palm.pressure_threshold);
+}
+
+static inline void
+tp_init_palmdetect_size(struct tp_dispatch *tp,
+			struct evdev_device *device)
+{
+	const char *prop;
+	int threshold;
+
+	if (!tp->touch_size.use_touch_size)
+		return;
+
+	prop = NULL;
+	if (!prop)
+		return;
+
+	threshold = parse_palm_size_property(prop);
+	if (threshold == 0) {
+		evdev_log_bug_client(device,
+				     "palm: ignoring invalid threshold %s\n",
+				     prop);
+		return;
+	}
+
+	tp->palm.use_size = true;
+	tp->palm.size_threshold = threshold;
 }
 
 static void
@@ -2307,6 +2727,7 @@ tp_init_palmdetect(struct tp_dispatch *tp,
 
 	tp->palm.right_edge = INT_MAX;
 	tp->palm.left_edge = INT_MIN;
+	tp->palm.upper_edge = INT_MIN;
 
 	if (device->tags & EVDEV_TAG_EXTERNAL_TOUCHPAD &&
 	    !tp_is_tpkb_combo_below(device))
@@ -2320,18 +2741,32 @@ tp_init_palmdetect(struct tp_dispatch *tp,
 		tp->palm.use_mt_tool = true;
 
 	tp_init_palmdetect_edge(tp, device);
+	tp_init_palmdetect_pressure(tp, device);
+	tp_init_palmdetect_size(tp, device);
 }
 
 static void
 tp_init_sendevents(struct tp_dispatch *tp,
 		   struct evdev_device *device)
 {
+	char timer_name[64];
+
+	snprintf(timer_name,
+		 sizeof(timer_name),
+		  "%s trackpoint",
+		  evdev_device_get_sysname(device));
 	libinput_timer_init(&tp->palm.trackpoint_timer,
 			    tp_libinput_context(tp),
+			    timer_name,
 			    tp_trackpoint_timeout, tp);
 
+	snprintf(timer_name,
+		 sizeof(timer_name),
+		 "%s keyboard",
+		 evdev_device_get_sysname(device));
 	libinput_timer_init(&tp->dwt.keyboard_timer,
 			    tp_libinput_context(tp),
+			    timer_name,
 			    tp_keyboard_timeout, tp);
 }
 
@@ -2484,7 +2919,7 @@ tp_init_pressure(struct tp_dispatch *tp,
 
 	prop = NULL;
 	if (prop) {
-		if (!parse_pressure_range_property(prop, &hi, &lo)) {
+		if (!parse_range_property(prop, &hi, &lo)) {
 			evdev_log_bug_client(device,
 				     "discarding invalid pressure range '%s'\n",
 				     prop);
@@ -2520,10 +2955,58 @@ tp_init_pressure(struct tp_dispatch *tp,
 			"using pressure-based touch detection\n");
 }
 
+static bool
+tp_init_touch_size(struct tp_dispatch *tp,
+		   struct evdev_device *device)
+{
+	const char *prop;
+	int lo, hi;
+
+	if (!libevdev_has_event_code(device->evdev,
+				     EV_ABS,
+				     ABS_MT_TOUCH_MAJOR)) {
+		return false;
+	}
+
+	if (libevdev_get_num_slots(device->evdev) < 5) {
+		evdev_log_bug_libinput(device,
+			       "Expected 5+ slots for touch size detection\n");
+		return false;
+	}
+
+	prop = NULL;
+	if (!prop)
+		return false;
+
+	if (!parse_range_property(prop, &hi, &lo)) {
+		evdev_log_bug_client(device,
+				     "discarding invalid touch size range '%s'\n",
+				     prop);
+		return false;
+	}
+
+	if (hi == 0 && lo == 0) {
+		evdev_log_info(device,
+			       "touch size based touch detection disabled\n");
+		return false;
+	}
+
+	/* Thresholds apply for both major or minor */
+	tp->touch_size.low = lo;
+	tp->touch_size.high = hi;
+	tp->touch_size.use_touch_size = true;
+
+	evdev_log_debug(device, "using size-based touch detection\n");
+
+	return true;
+}
+
 static int
 tp_init(struct tp_dispatch *tp,
 	struct evdev_device *device)
 {
+	bool use_touch_size = false;
+
 	tp->base.dispatch_type = DISPATCH_TOUCHPAD;
 	tp->base.interface = &tp_interface;
 	tp->device = device;
@@ -2538,7 +3021,11 @@ tp_init(struct tp_dispatch *tp,
 
 	evdev_device_init_abs_range_warnings(device);
 
-	tp_init_pressure(tp, device);
+	if (device->model_flags & EVDEV_MODEL_APPLE_TOUCHPAD)
+		use_touch_size = tp_init_touch_size(tp, device);
+
+	if (!use_touch_size)
+		tp_init_pressure(tp, device);
 
 	/* Set the dpi to that of the x axis, because that's what we normalize
 	   to when needed*/
@@ -2667,8 +3154,6 @@ evdev_mt_touchpad_create(struct evdev_device *device)
 	evdev_tag_touchpad(device);
 
 	tp = zalloc(sizeof *tp);
-	if (!tp)
-		return NULL;
 
 	if (!tp_init(tp, device)) {
 		tp_interface_destroy(&tp->base);

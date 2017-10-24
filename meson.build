@@ -1,5 +1,5 @@
 project('libinput', 'c', 'cpp',
-	version : '1.8.3',
+	version : '1.9.0',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu99', 'warning_level=2' ],
 	meson_version : '>= 0.40.0')
@@ -156,7 +156,7 @@ src_libinput = [
 	'src/libinput-private.h',
 	'src/evdev.c',
 	'src/evdev.h',
-	'src/evdev-lid.c',
+	'src/evdev-fallback.c',
 	'src/evdev-middle-button.c',
 	'src/evdev-mt-touchpad.c',
 	'src/evdev-mt-touchpad.h',
@@ -265,6 +265,7 @@ if get_option('documentation')
 		meson.source_root() + '/doc/absolute-axes.dox',
 		meson.source_root() + '/doc/absolute-coordinate-ranges.dox',
 		meson.source_root() + '/doc/building.dox',
+		meson.source_root() + '/doc/button_debouncing.dox',
 		meson.source_root() + '/doc/clickpad-softbuttons.dox',
 		meson.source_root() + '/doc/contributing.dox',
 		meson.source_root() + '/doc/device-configuration-via-udev.dox',
@@ -428,6 +429,32 @@ configure_file(input : 'tools/libinput-measure-touchpad-tap.man',
 	       install_dir : join_paths(get_option('mandir'), 'man1')
 	       )
 
+install_data('tools/libinput-measure-touchpad-pressure',
+	     install_dir : libinput_tool_path)
+configure_file(input : 'tools/libinput-measure-touchpad-pressure.man',
+	       output : 'libinput-measure-touchpad-pressure.1',
+	       configuration : man_config,
+	       install : true,
+	       install_dir : join_paths(get_option('mandir'), 'man1')
+	       )
+install_data('tools/libinput-measure-touch-size',
+	     install_dir : libinput_tool_path)
+configure_file(input : 'tools/libinput-measure-touch-size.man',
+	       output : 'libinput-measure-touch-size.1',
+	       configuration : man_config,
+	       install : true,
+	       install_dir : join_paths(get_option('mandir'), 'man1')
+	       )
+
+install_data('tools/libinput-measure-trackpoint-range',
+            install_dir : libinput_tool_path)
+configure_file(input : 'tools/libinput-measure-trackpoint-range.man',
+	       output : 'libinput-measure-trackpoint-range.1',
+	       configuration : man_config,
+	       install : true,
+	       install_dir : join_paths(get_option('mandir'), 'man1')
+	       )
+
 if get_option('debug-gui')
 	dep_gtk = dependency('gtk+-3.0')
 	dep_cairo = dependency('cairo')
@@ -514,9 +541,12 @@ if get_option('tests')
 		'test/litest-device-generic-singletouch.c',
 		'test/litest-device-gpio-keys.c',
 		'test/litest-device-huion-pentablet.c',
+		'test/litest-device-ignored-mouse.c',
 		'test/litest-device-keyboard.c',
 		'test/litest-device-keyboard-all-codes.c',
 		'test/litest-device-keyboard-razer-blackwidow.c',
+		'test/litest-device-keyboard-razer-blade-stealth.c',
+		'test/litest-device-keyboard-razer-blade-stealth-videoswitch.c',
 		'test/litest-device-lid-switch.c',
 		'test/litest-device-lid-switch-surface3.c',
 		'test/litest-device-logitech-trackball.c',
@@ -538,9 +568,11 @@ if get_option('tests')
 		'test/litest-device-synaptics-st.c',
 		'test/litest-device-synaptics-t440.c',
 		'test/litest-device-synaptics-x1-carbon-3rd.c',
+		'test/litest-device-thinkpad-extrabuttons.c',
 		'test/litest-device-trackpoint.c',
 		'test/litest-device-touch-screen.c',
 		'test/litest-device-touchscreen-fuzz.c',
+		'test/litest-device-uclogic-tablet.c',
 		'test/litest-device-wacom-bamboo-16fg-pen.c',
 		'test/litest-device-wacom-cintiq-12wx-pen.c',
 		'test/litest-device-wacom-cintiq-13hdt-finger.c',
@@ -602,17 +634,16 @@ if get_option('tests')
 		def_no_main,
 		def_disable_backtrace
 	]
-	test_litest_selftest_sources = [
+	test_litest_selftest_sources = lib_litest_sources + [
 		'test/litest-selftest.c',
 		'test/litest.c',
 		'test/litest-int.h',
 		'test/litest.h'
 	]
-	deps_litest_selftest = [dep_litest]
 	test_litest_selftest = executable('test-litest-selftest',
 					  test_litest_selftest_sources,
 					  include_directories : [includes_src, includes_include],
-					  dependencies : deps_litest_selftest,
+					  dependencies : deps_litest,
 					  c_args : defs_litest_selftest,
 					  install : false)
 	test('test-litest-selftest', test_litest_selftest)
@@ -622,7 +653,9 @@ if get_option('tests')
 	     test_symbols_leak,
 	     args : [ meson.current_source_dir() ])
 
-	libinput_test_runner_sources = [
+	libinput_test_runner_sources = lib_litest_sources + [
+		'src/libinput-util.h',
+		'src/libinput-util.c',
 		'test/test-udev.c',
 		'test/test-path.c',
 		'test/test-pointer.c',
@@ -639,13 +672,13 @@ if get_option('tests')
 		'test/test-keyboard.c',
 		'test/test-device.c',
 		'test/test-gestures.c',
-		'test/test-lid.c'
+		'test/test-switch.c'
 	]
 	def_LT_VERSION = '-DLIBINPUT_LT_VERSION="@0@:@1@:@2@"'.format(libinput_lt_c, libinput_lt_r, libinput_lt_a)
 	libinput_test_runner = executable('libinput-test-suite-runner',
 					  libinput_test_runner_sources,
 					  include_directories : [includes_src, includes_include],
-					  dependencies : dep_litest,
+					  dependencies : deps_litest,
 					  c_args : [ def_LT_VERSION ],
 					  install : false)
 	test('libinput-test-suite-runner',

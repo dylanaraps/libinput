@@ -104,8 +104,7 @@ device_added(struct udev_device *udev_device,
 	evdev_read_calibration_prop(device);
 
 	output_name = udev_device_get_property_value(udev_device, "WL_OUTPUT");
-	if (output_name)
-		device->output_name = strdup(output_name);
+	device->output_name = safe_strdup(output_name);
 
 	return 0;
 }
@@ -298,8 +297,6 @@ udev_seat_create(struct udev_input *input,
 	struct udev_seat *seat;
 
 	seat = zalloc(sizeof *seat);
-	if (!seat)
-		return NULL;
 
 	libinput_seat_init(&seat->base, &input->base,
 			   device_seat, seat_name,
@@ -357,8 +354,6 @@ libinput_udev_create_context(const struct libinput_interface *interface,
 		return NULL;
 
 	input = zalloc(sizeof *input);
-	if (!input)
-		return NULL;
 
 	if (libinput_init(&input->base, interface,
 			  &interface_backend, user_data) != 0) {
@@ -389,7 +384,7 @@ libinput_udev_assign_seat(struct libinput *libinput,
 	if (input->seat_id != NULL)
 		return -1;
 
-	input->seat_id = strdup(seat_id);
+	input->seat_id = safe_strdup(seat_id);
 
 	if (udev_input_enable(&input->base) < 0)
 		return -1;

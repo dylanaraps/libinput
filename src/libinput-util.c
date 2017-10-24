@@ -52,6 +52,8 @@ list_insert(struct list *list, struct list *elm)
 {
 	assert((list->next != NULL && list->prev != NULL) ||
 	       !"list->next|prev is NULL, possibly missing list_init()");
+	assert(((elm->next == NULL && elm->prev == NULL) || list_empty(elm)) ||
+	       !"elm->next|prev is not NULL, list node used twice?");
 
 	elm->prev = list;
 	elm->next = list->next;
@@ -379,7 +381,7 @@ parse_tpkbcombo_layout_poperty(const char *prop,
  * @return true on success, false otherwise
  */
 bool
-parse_pressure_range_property(const char *prop, int *hi, int *lo)
+parse_range_property(const char *prop, int *hi, int *lo)
 {
 	int first, second;
 
@@ -402,6 +404,58 @@ parse_pressure_range_property(const char *prop, int *hi, int *lo)
 	*lo = second;
 
 	return true;
+}
+
+/**
+ * Helper function to parse the LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD
+ * property from udev. Property is of the form:
+ * LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=<integer>
+ * Where the number indicates the minimum threshold to consider a touch to
+ * be a palm.
+ *
+ * @param prop The value of the udev property (without the *
+ * LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=)
+ * @return The pressure threshold or 0 on error
+ */
+int
+parse_palm_pressure_property(const char *prop)
+{
+	int threshold = 0;
+
+	if (!prop)
+		return 0;
+
+	if (!safe_atoi(prop, &threshold) ||
+	    threshold < 0 ||
+	    threshold > 255) /* No touchpad device has pressure > 255 */
+		return 0;
+
+        return threshold;
+}
+
+/**
+ * Helper function to parse the LIBINPUT_ATTR_PALM_SIZE_THRESHOLD property
+ * from udev. Property is of the form:
+ * LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=<integer>
+ * Where the number indicates the minimum threshold to consider a touch to
+ * be a palm.
+ *
+ * @param prop The value of the udev property (without the
+ * LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=)
+ * @return The pressure threshold or 0 on error
+ */
+int
+parse_palm_size_property(const char *prop)
+{
+	int thr = 0;
+
+	if (!prop)
+		return 0;
+
+	if (!safe_atoi(prop, &thr) || thr < 0 || thr > 2028)
+		return 0;
+
+        return thr;
 }
 
 /**
@@ -467,8 +521,6 @@ strv_from_string(const char *in, const char *separators)
 
 	nelems++; /* NULL-terminated */
 	strv = zalloc(nelems * sizeof *strv);
-	if (!strv)
-		return NULL;
 
 	idx = 0;
 

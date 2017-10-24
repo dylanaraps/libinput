@@ -627,6 +627,22 @@ enum libinput_switch {
 	 * LIBINPUT_SWITCH_STATE_OFF.
 	 */
 	LIBINPUT_SWITCH_LID = 1,
+
+	/**
+	 * This switch indicates whether the device is in normal laptop mode
+	 * or behaves like a tablet-like device where the primary
+	 * interaction is usually a touch screen. When in tablet mode, the
+	 * keyboard and touchpad are usually inaccessible.
+	 *
+	 * If the switch is in state @ref LIBINPUT_SWITCH_STATE_OFF, the
+	 * device is in laptop mode. If the switch is in state @ref
+	 * LIBINPUT_SWITCH_STATE_ON, the device is in tablet mode and the
+	 * keyboard or touchpad may not be  accessible.
+	 *
+	 * It is up to the caller to identify which devices are inaccessible
+	 * in tablet mode.
+	 */
+	LIBINPUT_SWITCH_TABLET_MODE,
 };
 
 /**
@@ -3186,6 +3202,7 @@ libinput_ref(struct libinput *libinput);
  * (e.g. a libinput_device). When libinput_unref() returns
  * NULL, the caller must consider any resources related to that context
  * invalid. See https://bugs.freedesktop.org/show_bug.cgi?id=91872.
+ *
  * Example code:
  * @code
  * li = libinput_path_create_context(&interface, NULL);
@@ -3739,6 +3756,22 @@ libinput_device_pointer_has_button(struct libinput_device *device, uint32_t code
 int
 libinput_device_keyboard_has_key(struct libinput_device *device,
 				 uint32_t code);
+
+/**
+ * @ingroup device
+ *
+ * Check if a @ref LIBINPUT_DEVICE_CAP_SWITCH device has a switch of the
+ * given type.
+ *
+ * @param device A current input device
+ * @param sw Switch to check for
+ *
+ * @return 1 if the device supports this switch, 0 if it does not, -1
+ * on error.
+ */
+int
+libinput_device_switch_has_switch(struct libinput_device *device,
+				  enum libinput_switch sw);
 
 /**
  * @ingroup device

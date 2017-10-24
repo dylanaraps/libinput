@@ -26,12 +26,6 @@
 #include "litest.h"
 #include "litest-int.h"
 
-static void litest_huion_tablet_setup(void)
-{
-	struct litest_device *d = litest_create_device(LITEST_HUION_TABLET);
-	litest_set_current_device(d);
-}
-
 static struct input_event proximity_in[] = {
 	{ .type = EV_ABS, .code = ABS_X, .value = LITEST_AUTO_ASSIGN },
 	{ .type = EV_ABS, .code = ABS_Y, .value = LITEST_AUTO_ASSIGN },
@@ -42,10 +36,6 @@ static struct input_event proximity_in[] = {
 };
 
 static struct input_event proximity_out[] = {
-	{ .type = EV_ABS, .code = ABS_X, .value = 0 },
-	{ .type = EV_ABS, .code = ABS_Y, .value = 0 },
-	{ .type = EV_KEY, .code = BTN_TOOL_PEN, .value = 0 },
-	{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
 	{ .type = -1, .code = -1 },
 };
 
@@ -98,15 +88,24 @@ static int events[] = {
 	-1, -1,
 };
 
-struct litest_test_device litest_huion_tablet_device = {
+static const char udev_rule[] =
+"ACTION==\"remove\", GOTO=\"huion_end\"\n"
+"KERNEL!=\"event*\", GOTO=\"huion_end\"\n"
+"ENV{ID_INPUT_TABLET}==\"\", GOTO=\"huion_end\"\n"
+"\n"
+"ATTRS{name}==\"litest HUION PenTablet Pen\","
+"    ENV{LIBINPUT_MODEL_TABLET_NO_PROXIMITY_OUT}=\"1\"\n"
+"\n"
+"LABEL=\"huion_end\"";
+
+TEST_DEVICE("huion-tablet",
 	.type = LITEST_HUION_TABLET,
 	.features = LITEST_TABLET,
-	.shortname = "huion-tablet",
-	.setup = litest_huion_tablet_setup,
 	.interface = &interface,
 
 	.name = "HUION PenTablet Pen",
 	.id = &input_id,
 	.events = events,
 	.absinfo = absinfo,
-};
+	.udev_rule = udev_rule,
+)

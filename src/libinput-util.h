@@ -51,9 +51,12 @@
 #define PRODUCT_ID_APPLE_KBD_TOUCHPAD 0x273
 #define PRODUCT_ID_APPLE_APPLETOUCH 0x21a
 #define PRODUCT_ID_SYNAPTICS_SERIAL 0x007
+#define PRODUCT_ID_WACOM_EKR 0x0331
 
 /* The HW DPI rate we normalize to before calculating pointer acceleration */
 #define DEFAULT_MOUSE_DPI 1000
+#define DEFAULT_TRACKPOINT_RANGE 20
+#define DEFAULT_TRACKPOINT_SENSITIVITY 128
 
 #define ANSI_HIGHLIGHT		"\x1B[0;1;39m"
 #define ANSI_RED		"\x1B[0;31m"
@@ -137,7 +140,32 @@ bool list_empty(const struct list *list);
 static inline void *
 zalloc(size_t size)
 {
-	return calloc(1, size);
+	void *p;
+
+	p = calloc(1, size);
+	if (!p)
+		abort();
+
+	return p;
+}
+
+/**
+ * strdup guaranteed to succeed. If the input string is NULL, the output
+ * string is NULL. If the input string is a string pointer, we strdup or
+ * abort on failure.
+ */
+static inline char*
+safe_strdup(const char *str)
+{
+	char *s;
+
+	if (!str)
+		return NULL;
+
+	s = strdup(str);
+	if (!s)
+		abort();
+	return s;
 }
 
 /* This bitfield helper implementation is taken from from libevdev-util.h,
@@ -351,10 +379,7 @@ matrix_to_relative(struct matrix *dest, const struct matrix *src)
  * upon success or -1 upon failure. In the case of failure the pointer is set
  * to NULL.
  */
-static inline int
-xasprintf(char **strp, const char *fmt, ...)
-	LIBINPUT_ATTRIBUTE_PRINTF(2, 3);
-
+LIBINPUT_ATTRIBUTE_PRINTF(2, 3)
 static inline int
 xasprintf(char **strp, const char *fmt, ...)
 {
@@ -392,7 +417,9 @@ int parse_mouse_wheel_click_count_property(const char *prop);
 double parse_trackpoint_accel_property(const char *prop);
 bool parse_dimension_property(const char *prop, size_t *width, size_t *height);
 bool parse_calibration_property(const char *prop, float calibration[6]);
-bool parse_pressure_range_property(const char *prop, int *hi, int *lo);
+bool parse_range_property(const char *prop, int *hi, int *lo);
+int parse_palm_pressure_property(const char *prop);
+int parse_palm_size_property(const char *prop);
 
 enum tpkbcombo_layout {
 	TPKBCOMBO_LAYOUT_UNKNOWN,
@@ -447,14 +474,27 @@ tv2us(const struct timeval *tv)
 	return s2us(tv->tv_sec) + tv->tv_usec;
 }
 
+static inline struct timeval
+us2tv(uint64_t time)
+{
+	struct timeval tv;
+
+	tv.tv_sec = time / ms2us(1000);
+	tv.tv_usec = time % ms2us(1000);
+
+	return tv;
+}
+
 static inline bool
-safe_atoi(const char *str, int *val)
+safe_atoi_base(const char *str, int *val, int base)
 {
 	char *endptr;
 	long v;
 
+	assert(base == 10 || base == 16 || base == 8);
+
 	errno = 0;
-	v = strtol(str, &endptr, 10);
+	v = strtol(str, &endptr, base);
 	if (errno > 0)
 		return false;
 	if (str == endptr)
@@ -467,6 +507,12 @@ safe_atoi(const char *str, int *val)
 
 	*val = v;
 	return true;
+}
+
+static inline bool
+safe_atoi(const char *str, int *val)
+{
+	return safe_atoi_base(str, val, 10);
 }
 
 static inline bool

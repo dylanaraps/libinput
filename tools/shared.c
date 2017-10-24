@@ -25,6 +25,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <fnmatch.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -208,6 +209,15 @@ tools_parse_option(int option,
 			else
 			      return 1;
 			break;
+		case OPT_DISABLE_SENDEVENTS:
+			if (!optarg)
+				return 1;
+
+			snprintf(options->disable_pattern,
+				 sizeof(options->disable_pattern),
+				 "%s",
+				 optarg);
+			break;
 	}
 
 	return 0;
@@ -367,6 +377,15 @@ tools_device_apply_config(struct libinput_device *device,
 			libinput_device_config_accel_set_profile(device,
 								 options->profile);
 	}
+
+	if (libinput_device_config_send_events_get_modes(device) &
+	      LIBINPUT_CONFIG_SEND_EVENTS_DISABLED &&
+	    fnmatch(options->disable_pattern,
+		    libinput_device_get_name(device),
+		   0) !=  FNM_NOMATCH) {
+		libinput_device_config_send_events_set_mode(device,
+					    LIBINPUT_CONFIG_SEND_EVENTS_DISABLED);
+	}
 }
 
 static char*
@@ -397,7 +416,7 @@ find_device(const char *udev_tag)
 		}
 
 		if (udev_device_get_property_value(device, udev_tag))
-			device_node = strdup(udev_device_get_devnode(device));
+			device_node = safe_strdup(udev_device_get_devnode(device));
 
 		udev_device_unref(device);
 
@@ -491,10 +510,11 @@ tools_exec_command(const char *prefix, int real_argc, char **real_argv)
 	setup_path();
 
 	rc = execvp(executable, argv);
-	fprintf(stderr,
-		"Failed to execute '%s' (%s)\n",
-		command,
-		strerror(errno));
+	if (rc)
+		fprintf(stderr,
+			"Failed to execute '%s' (%s)\n",
+			command,
+			strerror(errno));
 
 	return EXIT_FAILURE;
 }

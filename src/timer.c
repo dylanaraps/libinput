@@ -34,13 +34,23 @@
 #include "timer.h"
 
 void
-libinput_timer_init(struct libinput_timer *timer, struct libinput *libinput,
+libinput_timer_init(struct libinput_timer *timer,
+		    struct libinput *libinput,
+		    const char *timer_name,
 		    void (*timer_func)(uint64_t now, void *timer_func_data),
 		    void *timer_func_data)
 {
 	timer->libinput = libinput;
+	if (timer_name)
+		timer->timer_name = safe_strdup(timer_name);
 	timer->timer_func = timer_func;
 	timer->timer_func_data = timer_func_data;
+}
+
+void
+libinput_timer_destroy(struct libinput_timer *timer)
+{
+	free(timer->timer_name);
 }
 
 static void
@@ -64,6 +74,8 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
 	if (r)
 		log_error(libinput, "timer: timerfd_settime error: %s\n", strerror(errno));
+
+	libinput->timer.next_expiry = earliest_expire;
 }
 
 void
@@ -76,12 +88,14 @@ libinput_timer_set_flags(struct libinput_timer *timer,
 	if (expire < now) {
 		if ((flags & TIMER_FLAG_ALLOW_NEGATIVE) == 0)
 			log_bug_libinput(timer->libinput,
-					 "timer: offset negative (-%" PRIu64 ")\n",
+					 "timer %s: offset negative (-%" PRIu64 ")\n",
+					 timer->timer_name ? timer->timer_name : "",
 					 now - expire);
 	} else if ((expire - now) > ms2us(5000)) {
 		log_bug_libinput(timer->libinput,
-				 "timer: offset more than 5s, now %"
+				 "timer %s: offset more than 5s, now %"
 				 PRIu64 " expire %" PRIu64 "\n",
+				 timer->timer_name ? timer->timer_name : "",
 				 now, expire);
 	}
 #endif
@@ -113,24 +127,9 @@ libinput_timer_cancel(struct libinput_timer *timer)
 }
 
 static void
-libinput_timer_handler(void *data)
+libinput_timer_handler(struct libinput *libinput , uint64_t now)
 {
-	struct libinput *libinput = data;
 	struct libinput_timer *timer;
-	uint64_t now;
-	uint64_t discard;
-	int r;
-
-	r = read(libinput->timer.fd, &discard, sizeof(discard));
-	if (r == -1 && errno != EAGAIN)
-		log_bug_libinput(libinput,
-				 "timer: error %d reading from timerfd (%s)",
-				 errno,
-				 strerror(errno));
-
-	now = libinput_now(libinput);
-	if (now == 0)
-		return;
 
 restart:
 	list_for_each(timer, &libinput->timer.list, link) {
@@ -156,6 +155,28 @@ restart:
 	}
 }
 
+static void
+libinput_timer_dispatch(void *data)
+{
+	struct libinput *libinput = data;
+	uint64_t now;
+	uint64_t discard;
+	int r;
+
+	r = read(libinput->timer.fd, &discard, sizeof(discard));
+	if (r == -1 && errno != EAGAIN)
+		log_bug_libinput(libinput,
+				 "timer: error %d reading from timerfd (%s)",
+				 errno,
+				 strerror(errno));
+
+	now = libinput_now(libinput);
+	if (now == 0)
+		return;
+
+	libinput_timer_handler(libinput, now);
+}
+
 int
 libinput_timer_subsys_init(struct libinput *libinput)
 {
@@ -168,7 +189,7 @@ libinput_timer_subsys_init(struct libinput *libinput)
 
 	libinput->timer.source = libinput_add_fd(libinput,
 						 libinput->timer.fd,
-						 libinput_timer_handler,
+						 libinput_timer_dispatch,
 						 libinput);
 	if (!libinput->timer.source) {
 		close(libinput->timer.fd);
@@ -186,4 +207,23 @@ libinput_timer_subsys_destroy(struct libinput *libinput)
 
 	libinput_remove_source(libinput, libinput->timer.source);
 	close(libinput->timer.fd);
+}
+
+/**
+ * For a caller calling libinput_dispatch() only infrequently, we may have a
+ * timer expiry *and* a later input event waiting in the pipe. We cannot
+ * guarantee that we read the timer expiry first, so this hook exists to
+ * flush any timers.
+ *
+ * Assume 'now' is the current time check if there is a current timer expiry
+ * before this time. If so, trigger the timer func.
+ */
+void
+libinput_timer_flush(struct libinput *libinput, uint64_t now)
+{
+	if (libinput->timer.next_expiry == 0 ||
+	    libinput->timer.next_expiry > now)
+		return;
+
+	libinput_timer_handler(libinput, now);
 }

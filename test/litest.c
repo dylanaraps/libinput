@@ -173,8 +173,6 @@ litest_backtrace(void)
 	char procname[256];
 	Dl_info dlinfo;
 	/* filename and i are unused ifdef LITEST_SHUTUP */
-	const char *filename __attribute__((unused));
-	int i __attribute__((unused)) = 0;
 
 	pip.unwind_info = NULL;
 	ret = unw_getcontext(&context);
@@ -199,6 +197,8 @@ litest_backtrace(void)
 		char file[PATH_MAX];
 		int line;
 		bool have_lineno = false;
+		const char *filename = "?";
+		int i = 0;
 
 		ret = unw_get_proc_info(&cursor, &pip);
 		if (ret) {
@@ -226,8 +226,6 @@ litest_backtrace(void)
 								  (pip.start_ip + off),
 								  file,
 								  &line);
-		} else {
-			filename = "?";
 		}
 
 		if (have_lineno) {
@@ -353,140 +351,7 @@ void litest_generic_device_teardown(void)
 	current_device = NULL;
 }
 
-extern struct litest_test_device litest_keyboard_device;
-extern struct litest_test_device litest_synaptics_clickpad_device;
-extern struct litest_test_device litest_synaptics_touchpad_device;
-extern struct litest_test_device litest_synaptics_t440_device;
-extern struct litest_test_device litest_trackpoint_device;
-extern struct litest_test_device litest_bcm5974_device;
-extern struct litest_test_device litest_mouse_device;
-extern struct litest_test_device litest_wacom_touch_device;
-extern struct litest_test_device litest_wacom_bamboo_tablet_device;
-extern struct litest_test_device litest_wacom_cintiq_tablet_device;
-extern struct litest_test_device litest_wacom_intuos_tablet_device;
-extern struct litest_test_device litest_wacom_isdv4_tablet_device;
-extern struct litest_test_device litest_alps_device;
-extern struct litest_test_device litest_generic_singletouch_device;
-extern struct litest_test_device litest_qemu_tablet_device;
-extern struct litest_test_device litest_xen_virtual_pointer_device;
-extern struct litest_test_device litest_vmware_virtmouse_device;
-extern struct litest_test_device litest_synaptics_hover_device;
-extern struct litest_test_device litest_synaptics_carbon3rd_device;
-extern struct litest_test_device litest_protocol_a_screen;
-extern struct litest_test_device litest_wacom_finger_device;
-extern struct litest_test_device litest_keyboard_blackwidow_device;
-extern struct litest_test_device litest_wheel_only_device;
-extern struct litest_test_device litest_mouse_roccat_device;
-extern struct litest_test_device litest_ms_surface_cover_device;
-extern struct litest_test_device litest_logitech_trackball_device;
-extern struct litest_test_device litest_atmel_hover_device;
-extern struct litest_test_device litest_alps_dualpoint_device;
-extern struct litest_test_device litest_mouse_low_dpi_device;
-extern struct litest_test_device litest_generic_multitouch_screen_device;
-extern struct litest_test_device litest_nexus4_device;
-extern struct litest_test_device litest_magicpad_device;
-extern struct litest_test_device litest_elantech_touchpad_device;
-extern struct litest_test_device litest_mouse_gladius_device;
-extern struct litest_test_device litest_mouse_wheel_click_angle_device;
-extern struct litest_test_device litest_apple_keyboard_device;
-extern struct litest_test_device litest_anker_mouse_kbd_device;
-extern struct litest_test_device litest_waltop_tablet_device;
-extern struct litest_test_device litest_huion_tablet_device;
-extern struct litest_test_device litest_cyborg_rat_device;
-extern struct litest_test_device litest_yubikey_device;
-extern struct litest_test_device litest_synaptics_i2c_device;
-extern struct litest_test_device litest_wacom_cintiq_24hd_device;
-extern struct litest_test_device litest_multitouch_fuzz_screen_device;
-extern struct litest_test_device litest_wacom_intuos3_pad_device;
-extern struct litest_test_device litest_wacom_intuos5_pad_device;
-extern struct litest_test_device litest_keyboard_all_codes_device;
-extern struct litest_test_device litest_magicmouse_device;
-extern struct litest_test_device litest_wacom_ekr_device;
-extern struct litest_test_device litest_wacom_cintiq_24hdt_pad_device;
-extern struct litest_test_device litest_wacom_cintiq_13hdt_finger_device;
-extern struct litest_test_device litest_wacom_cintiq_13hdt_pen_device;
-extern struct litest_test_device litest_wacom_cintiq_13hdt_pad_device;
-extern struct litest_test_device litest_wacom_hid4800_tablet_device;
-extern struct litest_test_device litest_mouse_wheel_click_count_device;
-extern struct litest_test_device litest_calibrated_touchscreen_device;
-extern struct litest_test_device litest_acer_hawaii_keyboard_device;
-extern struct litest_test_device litest_acer_hawaii_touchpad_device;
-extern struct litest_test_device litest_synaptics_rmi4_device;
-extern struct litest_test_device litest_mouse_wheel_tilt_device;
-extern struct litest_test_device litest_lid_switch_device;
-extern struct litest_test_device litest_lid_switch_surface3_device;
-extern struct litest_test_device litest_appletouch_device;
-extern struct litest_test_device litest_gpio_keys_device;
-extern struct litest_test_device litest_wacom_mobilestudio_13hdt_pad_device;
-
-struct litest_test_device* devices[] = {
-	&litest_synaptics_clickpad_device,
-	&litest_synaptics_touchpad_device,
-	&litest_synaptics_t440_device,
-	&litest_keyboard_device,
-	&litest_trackpoint_device,
-	&litest_bcm5974_device,
-	&litest_mouse_device,
-	&litest_wacom_touch_device,
-	&litest_wacom_bamboo_tablet_device,
-	&litest_wacom_cintiq_tablet_device,
-	&litest_wacom_intuos_tablet_device,
-	&litest_wacom_isdv4_tablet_device,
-	&litest_alps_device,
-	&litest_generic_singletouch_device,
-	&litest_qemu_tablet_device,
-	&litest_xen_virtual_pointer_device,
-	&litest_vmware_virtmouse_device,
-	&litest_synaptics_hover_device,
-	&litest_synaptics_carbon3rd_device,
-	&litest_protocol_a_screen,
-	&litest_wacom_finger_device,
-	&litest_keyboard_blackwidow_device,
-	&litest_wheel_only_device,
-	&litest_mouse_roccat_device,
-	&litest_ms_surface_cover_device,
-	&litest_logitech_trackball_device,
-	&litest_atmel_hover_device,
-	&litest_alps_dualpoint_device,
-	&litest_mouse_low_dpi_device,
-	&litest_generic_multitouch_screen_device,
-	&litest_nexus4_device,
-	&litest_magicpad_device,
-	&litest_elantech_touchpad_device,
-	&litest_mouse_gladius_device,
-	&litest_mouse_wheel_click_angle_device,
-	&litest_apple_keyboard_device,
-	&litest_anker_mouse_kbd_device,
-	&litest_waltop_tablet_device,
-	&litest_huion_tablet_device,
-	&litest_cyborg_rat_device,
-	&litest_yubikey_device,
-	&litest_synaptics_i2c_device,
-	&litest_wacom_cintiq_24hd_device,
-	&litest_multitouch_fuzz_screen_device,
-	&litest_wacom_intuos3_pad_device,
-	&litest_wacom_intuos5_pad_device,
-	&litest_keyboard_all_codes_device,
-	&litest_magicmouse_device,
-	&litest_wacom_ekr_device,
-	&litest_wacom_cintiq_24hdt_pad_device,
-	&litest_wacom_cintiq_13hdt_finger_device,
-	&litest_wacom_cintiq_13hdt_pen_device,
-	&litest_wacom_cintiq_13hdt_pad_device,
-	&litest_wacom_hid4800_tablet_device,
-	&litest_mouse_wheel_click_count_device,
-	&litest_calibrated_touchscreen_device,
-	&litest_acer_hawaii_keyboard_device,
-	&litest_acer_hawaii_touchpad_device,
-	&litest_synaptics_rmi4_device,
-	&litest_mouse_wheel_tilt_device,
-	&litest_lid_switch_device,
-	&litest_lid_switch_surface3_device,
-	&litest_appletouch_device,
-	&litest_gpio_keys_device,
-	&litest_wacom_mobilestudio_13hdt_pad_device,
-	NULL,
-};
+struct litest_test_device** devices;
 
 static struct list all_tests;
 
@@ -528,9 +393,8 @@ litest_add_tcase_for_device(struct suite *suite,
 	struct test *t;
 
 	t = zalloc(sizeof(*t));
-	assert(t != NULL);
-	t->name = strdup(funcname);
-	t->devname = strdup(dev->shortname);
+	t->name = safe_strdup(funcname);
+	t->devname = safe_strdup(dev->shortname);
 	t->func = func;
 	t->setup = dev->setup;
 	t->teardown = dev->teardown ?
@@ -544,19 +408,19 @@ litest_add_tcase_for_device(struct suite *suite,
 static void
 litest_add_tcase_no_device(struct suite *suite,
 			   void *func,
+			   const char *funcname,
 			   const struct range *range)
 {
 	struct test *t;
-	const char *test_name = "no device";
+	const char *test_name = funcname;
 
 	if (filter_device &&
 	    fnmatch(filter_device, test_name, 0) != 0)
 		return;
 
 	t = zalloc(sizeof(*t));
-	assert(t != NULL);
-	t->name = strdup(test_name);
-	t->devname = strdup("no device");
+	t->name = safe_strdup(test_name);
+	t->devname = safe_strdup("no device");
 	t->func = func;
 	if (range)
 		t->range = *range;
@@ -571,17 +435,13 @@ get_suite(const char *name)
 {
 	struct suite *s;
 
-	if (all_tests.next == NULL && all_tests.prev == NULL)
-		list_init(&all_tests);
-
 	list_for_each(s, &all_tests, node) {
 		if (streq(s->name, name))
 			return s;
 	}
 
 	s = zalloc(sizeof(*s));
-	assert(s != NULL);
-	s->name = strdup(name);
+	s->name = safe_strdup(name);
 
 	list_init(&s->tests);
 	list_insert(&all_tests, &s->node);
@@ -616,10 +476,13 @@ litest_add_tcase(const char *suite_name,
 
 	if (required == LITEST_DISABLE_DEVICE &&
 	    excluded == LITEST_DISABLE_DEVICE) {
-		litest_add_tcase_no_device(suite, func, range);
+		litest_add_tcase_no_device(suite, func, funcname, range);
 		added = true;
 	} else if (required != LITEST_ANY || excluded != LITEST_ANY) {
 		for (; *dev; dev++) {
+			if ((*dev)->features & LITEST_IGNORED)
+				continue;
+
 			if (filter_device &&
 			    fnmatch(filter_device, (*dev)->shortname, 0) != 0)
 				continue;
@@ -636,6 +499,9 @@ litest_add_tcase(const char *suite_name,
 		}
 	} else {
 		for (; *dev; dev++) {
+			if ((*dev)->features & LITEST_IGNORED)
+				continue;
+
 			if (filter_device &&
 			    fnmatch(filter_device, (*dev)->shortname, 0) != 0)
 				continue;
@@ -754,7 +620,7 @@ _litest_add_ranged_for_device(const char *name,
 
 	/* only abort if no filter was set, that's a bug */
 	if (!device_filtered)
-		litest_abort_msg("Invalid test device type");
+		litest_abort_msg("Invalid test device type\n");
 }
 
 LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
@@ -838,7 +704,6 @@ litest_init_all_device_udev_rules(struct list *created_files)
 		udev_file = litest_init_device_udev_rules(*dev);
 		if (udev_file) {
 			struct created_file *file = zalloc(sizeof(*file));
-			litest_assert(file);
 			file->path = udev_file;
 			list_insert(created_files, &file->link);
 		}
@@ -920,13 +785,12 @@ litest_free_test_list(struct list *tests)
 }
 
 static int
-litest_run_suite(char *argv0, struct list *tests, int which, int max)
+litest_run_suite(struct list *tests, int which, int max)
 {
 	int failed = 0;
 	SRunner *sr = NULL;
 	struct suite *s;
 	struct test *t;
-	int argvlen = strlen(argv0);
 	int count = -1;
 	struct name {
 		struct list node;
@@ -934,9 +798,6 @@ litest_run_suite(char *argv0, struct list *tests, int which, int max)
 	};
 	struct name *n, *tmp;
 	struct list testnames;
-
-	if (max > 1)
-		snprintf(argv0, argvlen, "libinput-test-%-50d", which);
 
 	/* Check just takes the suite/test name pointers but doesn't strdup
 	 * them - we have to keep them around */
@@ -963,7 +824,6 @@ litest_run_suite(char *argv0, struct list *tests, int which, int max)
 				  t->devname);
 			litest_assert(sname != NULL);
 			n = zalloc(sizeof(*n));
-			litest_assert_notnull(n);
 			n->name = sname;
 			list_insert(&testnames, &n->node);
 
@@ -973,7 +833,6 @@ litest_run_suite(char *argv0, struct list *tests, int which, int max)
 				  t->devname);
 			litest_assert(tname != NULL);
 			n = zalloc(sizeof(*n));
-			litest_assert_notnull(n);
 			n->name = tname;
 			list_insert(&testnames, &n->node);
 
@@ -1015,7 +874,7 @@ out:
 }
 
 static int
-litest_fork_subtests(char *argv0, struct list *tests, int max_forks)
+litest_fork_subtests(struct list *tests, int max_forks)
 {
 	int failed = 0;
 	int status;
@@ -1025,7 +884,7 @@ litest_fork_subtests(char *argv0, struct list *tests, int max_forks)
 	for (f = 0; f < max_forks; f++) {
 		pid = fork();
 		if (pid == 0) {
-			failed = litest_run_suite(argv0, tests, f, max_forks);
+			failed = litest_run_suite(tests, f, max_forks);
 			litest_free_test_list(&all_tests);
 			exit(failed);
 			/* child always exits here */
@@ -1062,9 +921,9 @@ litest_run(int argc, char **argv)
 	litest_setup_sighandler(SIGINT);
 
 	if (jobs == 1)
-		failed = litest_run_suite(argv[0], &all_tests, 1, 1);
+		failed = litest_run_suite(&all_tests, 1, 1);
 	else
-		failed = litest_fork_subtests(argv[0], &all_tests, jobs);
+		failed = litest_fork_subtests(&all_tests, jobs);
 
 	litest_free_test_list(&all_tests);
 
@@ -1084,7 +943,7 @@ merge_absinfo(const struct input_absinfo *orig,
 	if (!orig)
 		return NULL;
 
-	abs = calloc(sz, sizeof(*abs));
+	abs = zalloc(sz * sizeof(*abs));
 	litest_assert(abs != NULL);
 
 	nelem = 0;
@@ -1118,7 +977,7 @@ merge_events(const int *orig, const int *override)
 	if (!orig)
 		return NULL;
 
-	events = calloc(sz, sizeof(int));
+	events = zalloc(sz * sizeof(int));
 	litest_assert(events != NULL);
 
 	nelem = 0;
@@ -1150,9 +1009,7 @@ litest_copy_file(const char *dest, const char *src, const char *header)
 	int suffixlen;
 
 	file = zalloc(sizeof(*file));
-	litest_assert(file);
-	file->path = strdup(dest);
-	litest_assert(file->path);
+	file->path = safe_strdup(dest);
 
 	suffixlen = file->path + strlen(file->path)  - rindex(file->path, '.');
 	out = mkstemps(file->path, suffixlen);
@@ -1281,7 +1138,10 @@ litest_init_device_udev_rules(struct litest_test_device *dev)
 	return path;
 }
 
-static struct litest_device *
+/**
+ * Creates a uinput device but does not add it to a libinput context
+ */
+struct litest_device *
 litest_create(enum litest_device_type which,
 	      const char *name_override,
 	      struct input_id *id_override,
@@ -1294,6 +1154,8 @@ litest_create(enum litest_device_type which,
 	const struct input_id *id;
 	struct input_absinfo *abs;
 	int *events, *e;
+	const char *path;
+	int fd, rc;
 
 	dev = devices;
 	while (*dev) {
@@ -1306,7 +1168,6 @@ litest_create(enum litest_device_type which,
 		ck_abort_msg("Invalid device type %d\n", which);
 
 	d = zalloc(sizeof(*d));
-	litest_assert(d != NULL);
 
 	/* device has custom create method */
 	if ((*dev)->create) {
@@ -1314,34 +1175,40 @@ litest_create(enum litest_device_type which,
 		if (abs_override || events_override) {
 			litest_abort_msg("Custom create cannot be overridden");
 		}
+	} else {
+		abs = merge_absinfo((*dev)->absinfo, abs_override);
+		events = merge_events((*dev)->events, events_override);
+		name = name_override ? name_override : (*dev)->name;
+		id = id_override ? id_override : (*dev)->id;
 
-		return d;
-	}
+		d->uinput = litest_create_uinput_device_from_description(name,
+									 id,
+									 abs,
+									 events);
+		d->interface = (*dev)->interface;
 
-	abs = merge_absinfo((*dev)->absinfo, abs_override);
-	events = merge_events((*dev)->events, events_override);
-	name = name_override ? name_override : (*dev)->name;
-	id = id_override ? id_override : (*dev)->id;
+		for (e = events; *e != -1; e += 2) {
+			unsigned int type = *e,
+				     code = *(e + 1);
 
-	d->uinput = litest_create_uinput_device_from_description(name,
-								 id,
-								 abs,
-								 events);
-	d->interface = (*dev)->interface;
-
-	for (e = events; *e != -1; e += 2) {
-		unsigned int type = *e,
-			     code = *(e + 1);
-
-		if (type == INPUT_PROP_MAX &&
-		    code == INPUT_PROP_SEMI_MT) {
-			d->semi_mt.is_semi_mt = true;
-			break;
+			if (type == INPUT_PROP_MAX &&
+			    code == INPUT_PROP_SEMI_MT) {
+				d->semi_mt.is_semi_mt = true;
+				break;
+			}
 		}
+
+		free(abs);
+		free(events);
 	}
 
-	free(abs);
-	free(events);
+	path = libevdev_uinput_get_devnode(d->uinput);
+	litest_assert(path != NULL);
+	fd = open(path, O_RDWR|O_NONBLOCK);
+	litest_assert_int_ne(fd, -1);
+
+	rc = libevdev_new_from_fd(fd, &d->evdev);
+	litest_assert_int_eq(rc, 0);
 
 	return d;
 
@@ -1371,6 +1238,8 @@ void
 litest_restore_log_handler(struct libinput *libinput)
 {
 	libinput_log_set_handler(libinput, litest_log_handler);
+	if (verbose)
+		libinput_log_set_priority(libinput, LIBINPUT_LOG_PRIORITY_DEBUG);
 }
 
 LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
@@ -1402,8 +1271,6 @@ litest_add_device_with_overrides(struct libinput *libinput,
 				 const int *events_override)
 {
 	struct litest_device *d;
-	int fd;
-	int rc;
 	const char *path;
 
 	d = litest_create(which,
@@ -1414,11 +1281,6 @@ litest_add_device_with_overrides(struct libinput *libinput,
 
 	path = libevdev_uinput_get_devnode(d->uinput);
 	litest_assert(path != NULL);
-	fd = open(path, O_RDWR|O_NONBLOCK);
-	litest_assert_int_ne(fd, -1);
-
-	rc = libevdev_new_from_fd(fd, &d->evdev);
-	litest_assert_int_eq(rc, 0);
 
 	d->libinput = libinput;
 	d->libinput_device = libinput_path_add_device(d->libinput, path);
@@ -1478,8 +1340,10 @@ litest_delete_device(struct litest_device *d)
 
 	litest_assert_int_eq(d->skip_ev_syn, 0);
 
-	libinput_device_unref(d->libinput_device);
-	libinput_path_remove_device(d->libinput_device);
+	if (d->libinput_device) {
+		libinput_path_remove_device(d->libinput_device);
+		libinput_device_unref(d->libinput_device);
+	}
 	if (d->owns_context)
 		libinput_unref(d->libinput);
 	close(libevdev_get_fd(d->evdev));
@@ -1664,6 +1528,8 @@ touch_up(struct litest_device *d, unsigned int slot)
 		{ .type = EV_ABS, .code = ABS_MT_SLOT, .value = LITEST_AUTO_ASSIGN },
 		{ .type = EV_ABS, .code = ABS_MT_TRACKING_ID, .value = -1 },
 		{ .type = EV_ABS, .code = ABS_MT_PRESSURE, .value = 0 },
+		{ .type = EV_ABS, .code = ABS_MT_TOUCH_MAJOR, .value = 0 },
+		{ .type = EV_ABS, .code = ABS_MT_TOUCH_MINOR, .value = 0 },
 		{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
 		{ .type = -1, .code = -1 }
 	};
@@ -1866,7 +1732,7 @@ litest_touch_move_to(struct litest_device *d,
 		     double x_to, double y_to,
 		     int steps, int sleep_ms)
 {
-	for (int i = 1; i < steps - 1; i++) {
+	for (int i = 1; i < steps; i++) {
 		litest_touch_move(d, slot,
 				  x_from + (x_to - x_from)/steps * i,
 				  y_from + (y_to - y_from)/steps * i);
@@ -2147,6 +2013,7 @@ litest_button_click(struct litest_device *d, unsigned int button, bool is_press)
 
 	ARRAY_FOR_EACH(click, ev)
 		litest_event(d, ev->type, ev->code, ev->value);
+	litest_timeout_debounce();
 }
 
 void
@@ -2178,10 +2045,24 @@ litest_keyboard_key(struct litest_device *d, unsigned int key, bool is_press)
 }
 
 void
-litest_lid_action(struct litest_device *dev,
-		  enum libinput_switch_state state)
+litest_switch_action(struct litest_device *dev,
+		     enum libinput_switch sw,
+		     enum libinput_switch_state state)
 {
-	litest_event(dev, EV_SW, SW_LID, state);
+	unsigned int code;
+
+	switch (sw) {
+	case LIBINPUT_SWITCH_LID:
+		code = SW_LID;
+		break;
+	case LIBINPUT_SWITCH_TABLET_MODE:
+		code = SW_TABLET_MODE;
+		break;
+	default:
+		litest_abort_msg("Invalid switch %d", sw);
+		break;
+	}
+	litest_event(dev, EV_SW, code, state);
 	litest_event(dev, EV_SYN, SYN_REPORT, 0);
 }
 
@@ -2193,7 +2074,11 @@ litest_scale_axis(const struct litest_device *d,
 	const struct input_absinfo *abs;
 
 	litest_assert_double_ge(val, 0.0);
-	litest_assert_double_le(val, 100.0);
+	/* major/minor must be able to beyond 100% for large fingers */
+	if (axis != ABS_MT_TOUCH_MAJOR &&
+	    axis != ABS_MT_TOUCH_MINOR) {
+		litest_assert_double_le(val, 100.0);
+	}
 
 	abs = libevdev_get_abs_info(d->evdev, axis);
 	litest_assert_notnull(abs);
@@ -2214,8 +2099,12 @@ int
 litest_scale(const struct litest_device *d, unsigned int axis, double val)
 {
 	int min, max;
+
 	litest_assert_double_ge(val, 0.0);
-	litest_assert_double_le(val, 100.0);
+	/* major/minor must be able to beyond 100% for large fingers */
+	if (axis != ABS_MT_TOUCH_MAJOR &&
+	    axis != ABS_MT_TOUCH_MINOR)
+		litest_assert_double_le(val, 100.0);
 
 	if (axis <= ABS_Y) {
 		min = d->interface->min[axis];
@@ -2905,6 +2794,20 @@ litest_is_motion_event(struct libinput_event *event)
 }
 
 void
+litest_assert_key_event(struct libinput *li, unsigned int key,
+			enum libinput_key_state state)
+{
+	struct libinput_event *event;
+
+	litest_wait_for_event(li);
+	event = libinput_get_event(li);
+
+	litest_is_keyboard_event(event, key, state);
+
+	libinput_event_destroy(event);
+}
+
+void
 litest_assert_button_event(struct libinput *li, unsigned int button,
 			   enum libinput_button_state state)
 {
@@ -3249,6 +3152,12 @@ litest_timeout_tapndrag(void)
 }
 
 void
+litest_timeout_debounce(void)
+{
+	msleep(15);
+}
+
+void
 litest_timeout_softbuttons(void)
 {
 	msleep(300);
@@ -3306,6 +3215,12 @@ void
 litest_timeout_trackpoint(void)
 {
 	msleep(320);
+}
+
+void
+litest_timeout_tablet_proxout(void)
+{
+	msleep(70);
 }
 
 void
@@ -3600,13 +3515,45 @@ static void
 litest_list_tests(struct list *tests)
 {
 	struct suite *s;
+	const char *last_test_name = NULL;
 
 	list_for_each(s, tests, node) {
 		struct test *t;
 		printf("%s:\n", s->name);
 		list_for_each(t, &s->tests, node) {
-			printf("	%s\n", t->name);
+			if (!last_test_name ||
+			    !streq(last_test_name, t->name))
+				printf("	%s:\n", t->name);
+
+			last_test_name = t->name;
+
+			printf("		%s\n", t->devname);
 		}
+	}
+}
+
+extern const struct test_device __start_test_section, __stop_test_section;
+
+static void
+litest_init_test_devices(void)
+{
+	const struct test_device *t;
+	size_t ndevices = 0;
+
+	for (ndevices = 1,
+	     t = &__start_test_section;
+	     t < &__stop_test_section;
+	     ndevices++, t++)
+		; /* loopdeeloop */
+
+	ndevices++;
+	devices = zalloc(ndevices * sizeof(*devices));
+
+	for (ndevices = 0,
+	     t = &__start_test_section;
+	     t < &__stop_test_section;
+	     t++, ndevices++) {
+		devices[ndevices] = t->device;
 	}
 }
 
@@ -3615,6 +3562,15 @@ main(int argc, char **argv)
 {
 	const struct rlimit corelimit = { 0, 0 };
 	enum litest_mode mode;
+
+	if (getuid() != 0) {
+		fprintf(stderr,
+			"%s must be run as root.\n",
+			program_invocation_short_name);
+		return 77;
+	}
+
+	litest_init_test_devices();
 
 	list_init(&all_tests);
 

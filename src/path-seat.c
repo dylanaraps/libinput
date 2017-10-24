@@ -82,8 +82,6 @@ path_seat_create(struct path_input *input,
 	struct path_seat *seat;
 
 	seat = zalloc(sizeof(*seat));
-	if (!seat)
-		return NULL;
 
 	libinput_seat_init(&seat->base, &input->base, seat_name,
 			   seat_logical_name, path_seat_destroy);
@@ -115,13 +113,13 @@ path_device_enable(struct path_input *input,
 	struct path_seat *seat;
 	struct evdev_device *device = NULL;
 	char *seat_name = NULL, *seat_logical_name = NULL;
-	const char *seat_prop, *output_name;
+	const char *seat_prop;
 
 	seat_prop = NULL;
-	seat_name = strdup(seat_prop ? seat_prop : default_seat);
+	seat_name = safe_strdup(seat_prop ? seat_prop : default_seat);
 
 	if (seat_logical_name_override) {
-		seat_logical_name = strdup(seat_logical_name_override);
+		seat_logical_name = safe_strdup(seat_logical_name_override);
 	} else {
 		seat_prop = NULL;
 		seat_logical_name = strdup(seat_prop ? seat_prop : default_seat_name);
@@ -169,9 +167,7 @@ path_device_enable(struct path_input *input,
 	}
 
 	evdev_read_calibration_prop(device);
-	output_name = NULL;
-	if (output_name)
-		device->output_name = strdup(output_name);
+	device->output_name = NULL;
 
 out:
 	free(seat_name);
@@ -219,14 +215,7 @@ path_create_device(struct libinput *libinput,
 	struct libinput_device *device;
 
 	dev = zalloc(sizeof *dev);
-	if (!dev)
-		return NULL;
-
-	dev->devnode = strdup(devnode);
-	if (!dev->devnode) {
-		free(dev);
-		return NULL;
-	}
+	dev->devnode = safe_strdup(devnode);
 	dev->sysname = strrchr(devnode, '/');
 	if (dev->sysname)
 		++dev->sysname;
@@ -281,8 +270,7 @@ libinput_path_create_context(const struct libinput_interface *interface,
 		return NULL;
 
 	input = zalloc(sizeof *input);
-	if (!input ||
-	    libinput_init(&input->base, interface,
+	if (libinput_init(&input->base, interface,
 			  &interface_backend, user_data) != 0) {
 		free(input);
 		return NULL;

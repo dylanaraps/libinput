@@ -286,8 +286,6 @@ netlink_seat_create(struct netlink_input *input,
 	struct netlink_seat *seat;
 
 	seat = zalloc(sizeof(*seat));
-	if (!seat)
-		return NULL;
 
 	libinput_seat_init(&seat->base, &input->base,
 			   device_seat, seat_name,
@@ -319,9 +317,7 @@ netlink_device_change_seat(struct libinput_device *device,
 	char *devnode;
 	int rc;
 
-	devnode = strdup(evdev->devnode);
-	if (!devnode)
-		return -1;
+	devnode = safe_strdup(evdev->devnode);
 	device_removed(input, devnode);
 	rc = device_added(input, devnode);
 	free(devnode);
@@ -346,8 +342,6 @@ libinput_netlink_create_context(const struct libinput_interface *interface,
 		return NULL;
 
 	input = zalloc(sizeof(*input));
-	if (!input)
-		return NULL;
 	input->sock = -1;
 
 	if (libinput_init(&input->base, interface,
@@ -377,7 +371,7 @@ libinput_netlink_assign_seat(struct libinput *libinput,
 	if (input->seat_id != NULL)
 		return -1;
 
-	input->seat_id = strdup(seat_id);
+	input->seat_id = safe_strdup(seat_id);
 
 	if (netlink_input_enable(&input->base) < 0)
 		return -1;

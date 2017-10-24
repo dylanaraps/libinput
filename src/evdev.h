@@ -36,12 +36,6 @@
 #include "timer.h"
 #include "filter.h"
 
-/*
- * The constant (linear) acceleration factor we use to normalize trackpoint
- * deltas before calculating pointer acceleration.
- */
-#define DEFAULT_TRACKPOINT_ACCEL 1.0
-
 /* The fake resolution value for abs devices without resolution */
 #define EVDEV_FAKE_RESOLUTION 1
 
@@ -75,6 +69,7 @@ enum evdev_device_tags {
 	EVDEV_TAG_LID_SWITCH = (1 << 5),
 	EVDEV_TAG_INTERNAL_KEYBOARD = (1 << 6),
 	EVDEV_TAG_EXTERNAL_KEYBOARD = (1 << 7),
+	EVDEV_TAG_TABLET_MODE_SWITCH = (1 << 8),
 };
 
 enum evdev_middlebutton_state {
@@ -126,6 +121,7 @@ enum evdev_device_model {
 	EVDEV_MODEL_HP_PAVILION_DM4_TOUCHPAD = (1 << 24),
 	EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON = (1 << 25),
 	EVDEV_MODEL_LOGITECH_MARBLE_MOUSE = (1 << 26),
+	EVDEV_MODEL_TABLET_NO_PROXIMITY_OUT = (1 << 27),
 };
 
 enum evdev_button_scroll_state {
@@ -133,6 +129,25 @@ enum evdev_button_scroll_state {
 	BUTTONSCROLL_BUTTON_DOWN,	/* button is down */
 	BUTTONSCROLL_READY,		/* ready for scroll events */
 	BUTTONSCROLL_SCROLLING,		/* have sent scroll events */
+};
+
+enum evdev_debounce_state {
+	/**
+	 * Initial state, no debounce but monitoring events
+	 */
+	DEBOUNCE_INIT,
+	/**
+	 * Bounce detected, future events need debouncing
+	 */
+	DEBOUNCE_NEEDED,
+	/**
+	 * Debounce is enabled, but no event is currently being filtered
+	 */
+	DEBOUNCE_ON,
+	/**
+	 * Debounce is enabled and we are currently filtering an event
+	 */
+	DEBOUNCE_ACTIVE,
 };
 
 struct mt_slot {
@@ -160,6 +175,7 @@ struct evdev_device {
 	bool is_mt;
 	bool is_suspended;
 	int dpi; /* HW resolution */
+	int trackpoint_range; /* trackpoint max delta */
 	struct ratelimit syn_drop_limit; /* ratelimit for SYN_DROPPED logging */
 	struct ratelimit nonpointer_rel_limit; /* ratelimit for REL_* events from non-pointer devices */
 	uint32_t model_flags;
@@ -294,9 +310,16 @@ struct evdev_dispatch_interface {
 	void (*post_added)(struct evdev_device *device,
 			   struct evdev_dispatch *dispatch);
 
+	/* For touch arbitration, called on the device that should
+	 * enable/disable touch capabilities */
 	void (*toggle_touch)(struct evdev_dispatch *dispatch,
 			     struct evdev_device *device,
 			     bool enable);
+
+	/* Return the state of the given switch */
+	enum libinput_switch_state
+		(*get_switch_state)(struct evdev_dispatch *dispatch,
+				    enum libinput_switch which);
 };
 
 enum evdev_dispatch_type {
@@ -304,7 +327,6 @@ enum evdev_dispatch_type {
 	DISPATCH_TOUCHPAD,
 	DISPATCH_TABLET,
 	DISPATCH_TABLET_PAD,
-	DISPATCH_LID_SWITCH,
 };
 
 struct evdev_dispatch {
@@ -325,57 +347,6 @@ evdev_verify_dispatch_type(struct evdev_dispatch *dispatch,
 		abort();
 }
 
-struct fallback_dispatch {
-	struct evdev_dispatch base;
-
-	struct libinput_device_config_calibration calibration;
-
-	struct {
-		bool is_enabled;
-		int angle;
-		struct matrix matrix;
-		struct libinput_device_config_rotation config;
-	} rotation;
-
-	struct {
-		struct device_coords point;
-		int32_t seat_slot;
-
-		struct {
-			struct device_coords min, max;
-			struct ratelimit range_warn_limit;
-		} warning_range;
-	} abs;
-
-	struct {
-		int slot;
-		struct mt_slot *slots;
-		size_t slots_len;
-		bool want_hysteresis;
-		struct device_coords hysteresis_margin;
-	} mt;
-
-	struct device_coords rel;
-
-	/* Bitmask of pressed keys used to ignore initial release events from
-	 * the kernel. */
-	unsigned long hw_key_mask[NLONGS(KEY_CNT)];
-
-	enum evdev_event_type pending_event;
-
-	/* true if we're reading events (i.e. not suspended) but we're
-	   ignoring them */
-	bool ignore_events;
-};
-
-static inline struct fallback_dispatch*
-fallback_dispatch(struct evdev_dispatch *dispatch)
-{
-	evdev_verify_dispatch_type(dispatch, DISPATCH_FALLBACK);
-
-	return container_of(dispatch, struct fallback_dispatch, base);
-}
-
 struct evdev_device *
 evdev_device_create(struct libinput_seat *seat, const char *devnode, const char *sysname);
 
@@ -393,6 +364,9 @@ evdev_init_calibration(struct evdev_device *device,
 
 void
 evdev_read_calibration_prop(struct evdev_device *device);
+
+enum switch_reliability
+evdev_read_switch_reliability_prop(struct evdev_device *device);
 
 void
 evdev_init_sendevents(struct evdev_device *device,
@@ -416,6 +390,15 @@ evdev_tablet_pad_create(struct evdev_device *device);
 
 struct evdev_dispatch *
 evdev_lid_switch_dispatch_create(struct evdev_device *device);
+
+struct evdev_dispatch *
+fallback_dispatch_create(struct libinput_device *libinput_device);
+
+bool
+evdev_is_fake_mt_device(struct evdev_device *device);
+
+int
+evdev_need_mtdev(struct evdev_device *device);
 
 void
 evdev_device_led_update(struct evdev_device *device, enum libinput_led leds);
@@ -464,6 +447,10 @@ int
 evdev_device_has_key(struct evdev_device *device, uint32_t code);
 
 int
+evdev_device_has_switch(struct evdev_device *device,
+			enum libinput_switch sw);
+
+int
 evdev_device_tablet_pad_get_num_buttons(struct evdev_device *device);
 
 int
@@ -479,14 +466,9 @@ struct libinput_tablet_pad_mode_group *
 evdev_device_tablet_pad_get_mode_group(struct evdev_device *device,
 				       unsigned int index);
 
-unsigned int
-evdev_device_tablet_pad_mode_group_get_button_target(
-				     struct libinput_tablet_pad_mode_group *g,
-				     unsigned int button_index);
-
-struct libinput_tablet_pad_led *
-evdev_device_tablet_pad_get_led(struct evdev_device *device,
-				unsigned int led);
+enum libinput_switch_state
+evdev_device_switch_get_state(struct evdev_device *device,
+			      enum libinput_switch sw);
 
 double
 evdev_device_transform_x(struct evdev_device *device,
@@ -522,6 +504,15 @@ evdev_pointer_notify_physical_button(struct evdev_device *device,
 
 void
 evdev_init_natural_scroll(struct evdev_device *device);
+
+void
+evdev_init_button_scroll(struct evdev_device *device,
+			 void (*change_scroll_method)(struct evdev_device *));
+
+int
+evdev_update_key_down_count(struct evdev_device *device,
+			    int code,
+			    int pressed);
 
 void
 evdev_notify_axis(struct evdev_device *device,

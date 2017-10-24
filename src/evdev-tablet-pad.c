@@ -504,16 +504,17 @@ pad_destroy(struct evdev_dispatch *dispatch)
 }
 
 static struct evdev_dispatch_interface pad_interface = {
-	pad_process,
-	pad_suspend, /* suspend */
-	NULL, /* remove */
-	pad_destroy,
-	NULL, /* device_added */
-	NULL, /* device_removed */
-	NULL, /* device_suspended */
-	NULL, /* device_resumed */
-	NULL, /* post_added */
-	NULL, /* toggle_touch */
+	.process = pad_process,
+	.suspend = pad_suspend,
+	.remove = NULL,
+	.destroy = pad_destroy,
+	.device_added = NULL,
+	.device_removed = NULL,
+	.device_suspended = NULL,
+	.device_resumed = NULL,
+	.post_added = NULL,
+	.toggle_touch = NULL,
+	.get_switch_state = NULL,
 };
 
 static void
@@ -628,8 +629,6 @@ evdev_tablet_pad_create(struct evdev_device *device)
 	struct pad_dispatch *pad;
 
 	pad = zalloc(sizeof *pad);
-	if (!pad)
-		return NULL;
 
 	if (pad_init(pad, device) != 0) {
 		pad_destroy(&pad->base);

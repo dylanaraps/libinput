@@ -50,6 +50,8 @@ libinput:touchpad:input:b0003v05ACp*
 libinput:touchpad:input:b0005v05ACp*
  LIBINPUT_MODEL_APPLE_TOUCHPAD=1
  LIBINPUT_ATTR_SIZE_HINT=104x75
+ LIBINPUT_ATTR_TOUCH_SIZE_RANGE=150:130
+ LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=800
 
 libinput:name:*Apple Inc. Apple Internal Keyboard*:dmi:*
  LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
@@ -89,6 +91,9 @@ libinput:mouse:input:b0003v06A3p0CD5*
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnDellInc.:*
 libinput:name:* Touchpad:dmi:*svnDellInc.:*
  LIBINPUT_MODEL_TOUCHPAD_VISIBLE_MARKER=1
+
+libinput:name:*AlpsPS/2 ALPS GlidePoint:dmi:*svnDellInc.:pnLatitudeE6220:*
+ LIBINPUT_ATTR_PRESSURE_RANGE=100:90
 
 ##########################################
 # Elantech
@@ -158,6 +163,20 @@ libinput:name:AlpsPS/2 ALPS GlidePoint:dmi:*svnHP:pnHPZBookStudioG3:*
  LIBINPUT_MODEL_HP_ZBOOK_STUDIO_G3=1
 
 ##########################################
+# HUION
+##########################################
+#
+# HUION PenTablet device. Some of these devices send a BTN_TOOL_PEN event
+# with value 1 on the first event received by the device but never send the
+# matching BTN_TOOL_PEN value 0 event. The device appears as if it was
+# permanently in proximity.
+#
+# HUION re-uses USB IDs for its devices, not every HUION tablet is
+# affected by this bug, libinput will auto-disable this feature
+libinput:tablet:input:b0003v256Cp*
+ LIBINPUT_MODEL_TABLET_NO_PROXIMITY_OUT=1
+
+##########################################
 # LENOVO
 ##########################################
 
@@ -183,6 +202,7 @@ libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPad??50*:
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPad??60*:
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPadX1Carbon3rd:*
  LIBINPUT_MODEL_LENOVO_T450_TOUCHPAD=1
+ LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=150
 
 ##########################################
 # Logitech
@@ -204,6 +224,15 @@ libinput:name:*Lid Switch*:dmi:*svnMicrosoftCorporation:pnSurface3:*
 # Surface 3 Type Cover keyboard
 libinput:name:*Microsoft Surface Type Cover Keyboard*:dmi:*svnMicrosoftCorporation:pnSurface3:*
  LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
+
+##########################################
+# Razer
+##########################################
+libinput:keyboard:input:b0003v1532p0220*
+ LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
+
+libinput:name:*Lid Switch*:dmi:*svnRazer:pnBlade*
+ LIBINPUT_ATTR_LID_SWITCH_RELIABILITY=write_open
 
 ##########################################
 # Synaptics

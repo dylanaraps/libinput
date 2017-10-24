@@ -58,6 +58,8 @@ enum touch_palm_state {
 	PALM_TYPING,
 	PALM_TRACKPOINT,
 	PALM_TOOL_PALM,
+	PALM_PRESSURE,
+	PALM_TOUCH_SIZE,
 };
 
 enum button_event {
@@ -147,6 +149,7 @@ struct tp_touch {
 	uint64_t time;
 	int pressure;
 	bool is_tool_palm; /* MT_TOOL_PALM */
+	int major, minor;
 
 	bool was_down; /* if distance == 0, false for pure hovering
 			  touches */
@@ -161,7 +164,10 @@ struct tp_touch {
 	} quirks;
 
 	struct {
-		struct device_coords samples[TOUCHPAD_HISTORY_LENGTH];
+		struct tp_history_point {
+			uint64_t time;
+			struct device_coords point;
+		} samples[TOUCHPAD_HISTORY_LENGTH];
 		unsigned int index;
 		unsigned int count;
 	} history;
@@ -214,6 +220,11 @@ struct tp_touch {
 		uint64_t first_touch_time;
 		struct device_coords initial;
 	} thumb;
+
+	struct {
+		double last_speed; /* speed in mm/s at last sample */
+		unsigned int exceeded_count;
+	} speed;
 };
 
 struct tp_dispatch {
@@ -246,6 +257,17 @@ struct tp_dispatch {
 		int high;
 		int low;
 	} pressure;
+
+	/* If touch size (either axis) goes above high -> touch down,
+	   if touch size (either axis) goes below low -> touch up */
+	struct  {
+		bool use_touch_size;
+		int high;
+		int low;
+
+		/* convert device units to angle */
+		double orientation_to_angle;
+	} touch_size;
 
 	struct device_coords hysteresis_margin;
 
@@ -334,6 +356,7 @@ struct tp_dispatch {
 	struct {
 		int32_t right_edge;		/* in device coordinates */
 		int32_t left_edge;		/* in device coordinates */
+		int32_t upper_edge;		/* in device coordinates */
 
 		bool trackpoint_active;
 		struct libinput_event_listener trackpoint_listener;
@@ -343,6 +366,12 @@ struct tp_dispatch {
 		bool monitor_trackpoint;
 
 		bool use_mt_tool;
+
+		bool use_pressure;
+		int pressure_threshold;
+
+		bool use_size;
+		int size_threshold;
 	} palm;
 
 	struct {
@@ -383,9 +412,14 @@ struct tp_dispatch {
 	} quirks;
 
 	struct {
-		struct libinput_event_listener lid_switch_listener;
+		struct libinput_event_listener listener;
 		struct evdev_device *lid_switch;
 	} lid_switch;
+
+	struct {
+		struct libinput_event_listener listener;
+		struct evdev_device *tablet_mode_switch;
+	} tablet_mode_switch;
 };
 
 static inline struct tp_dispatch*

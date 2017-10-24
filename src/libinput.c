@@ -1648,9 +1648,6 @@ libinput_add_fd(struct libinput *libinput,
 	struct epoll_event ep;
 
 	source = zalloc(sizeof *source);
-	if (!source)
-		return NULL;
-
 	source->dispatch = dispatch;
 	source->user_data = user_data;
 	source->fd = fd;
@@ -1691,11 +1688,6 @@ libinput_init(struct libinput *libinput,
 
 	libinput->events_len = 4;
 	libinput->events = zalloc(libinput->events_len * sizeof(*libinput->events));
-	if (!libinput->events) {
-		close(libinput->epoll_fd);
-		return -1;
-	}
-
 	libinput->log_handler = libinput_default_log_func;
 	libinput->log_priority = LIBINPUT_LOG_PRIORITY_ERROR;
 	libinput->interface = interface;
@@ -1865,8 +1857,8 @@ libinput_seat_init(struct libinput_seat *seat,
 {
 	seat->refcount = 1;
 	seat->libinput = libinput;
-	seat->physical_name = strdup(physical_name);
-	seat->logical_name = strdup(logical_name);
+	seat->physical_name = safe_strdup(physical_name);
+	seat->logical_name = safe_strdup(logical_name);
 	seat->destroy = destroy;
 	list_init(&seat->devices_list);
 	list_insert(&libinput->seat_list, &seat->link);
@@ -2117,8 +2109,6 @@ notify_added_device(struct libinput_device *device)
 	struct libinput_event_device_notify *added_device_event;
 
 	added_device_event = zalloc(sizeof *added_device_event);
-	if (!added_device_event)
-		return;
 
 	post_base_event(device,
 			LIBINPUT_EVENT_DEVICE_ADDED,
@@ -2131,8 +2121,6 @@ notify_removed_device(struct libinput_device *device)
 	struct libinput_event_device_notify *removed_device_event;
 
 	removed_device_event = zalloc(sizeof *removed_device_event);
-	if (!removed_device_event)
-		return;
 
 	post_base_event(device,
 			LIBINPUT_EVENT_DEVICE_REMOVED,
@@ -2193,8 +2181,6 @@ keyboard_notify_key(struct libinput_device *device,
 		return;
 
 	key_event = zalloc(sizeof *key_event);
-	if (!key_event)
-		return;
 
 	seat_key_count = update_seat_key_count(device->seat, key, state);
 
@@ -2222,8 +2208,6 @@ pointer_notify_motion(struct libinput_device *device,
 		return;
 
 	motion_event = zalloc(sizeof *motion_event);
-	if (!motion_event)
-		return;
 
 	*motion_event = (struct libinput_event_pointer) {
 		.time = time,
@@ -2247,8 +2231,6 @@ pointer_notify_motion_absolute(struct libinput_device *device,
 		return;
 
 	motion_absolute_event = zalloc(sizeof *motion_absolute_event);
-	if (!motion_absolute_event)
-		return;
 
 	*motion_absolute_event = (struct libinput_event_pointer) {
 		.time = time,
@@ -2273,8 +2255,6 @@ pointer_notify_button(struct libinput_device *device,
 		return;
 
 	button_event = zalloc(sizeof *button_event);
-	if (!button_event)
-		return;
 
 	seat_button_count = update_seat_button_count(device->seat,
 						     button,
@@ -2306,8 +2286,6 @@ pointer_notify_axis(struct libinput_device *device,
 		return;
 
 	axis_event = zalloc(sizeof *axis_event);
-	if (!axis_event)
-		return;
 
 	*axis_event = (struct libinput_event_pointer) {
 		.time = time,
@@ -2335,8 +2313,6 @@ touch_notify_touch_down(struct libinput_device *device,
 		return;
 
 	touch_event = zalloc(sizeof *touch_event);
-	if (!touch_event)
-		return;
 
 	*touch_event = (struct libinput_event_touch) {
 		.time = time,
@@ -2363,8 +2339,6 @@ touch_notify_touch_motion(struct libinput_device *device,
 		return;
 
 	touch_event = zalloc(sizeof *touch_event);
-	if (!touch_event)
-		return;
 
 	*touch_event = (struct libinput_event_touch) {
 		.time = time,
@@ -2390,8 +2364,6 @@ touch_notify_touch_up(struct libinput_device *device,
 		return;
 
 	touch_event = zalloc(sizeof *touch_event);
-	if (!touch_event)
-		return;
 
 	*touch_event = (struct libinput_event_touch) {
 		.time = time,
@@ -2414,8 +2386,6 @@ touch_notify_frame(struct libinput_device *device,
 		return;
 
 	touch_event = zalloc(sizeof *touch_event);
-	if (!touch_event)
-		return;
 
 	*touch_event = (struct libinput_event_touch) {
 		.time = time,
@@ -2437,8 +2407,6 @@ tablet_notify_axis(struct libinput_device *device,
 	struct libinput_event_tablet_tool *axis_event;
 
 	axis_event = zalloc(sizeof *axis_event);
-	if (!axis_event)
-		return;
 
 	*axis_event = (struct libinput_event_tablet_tool) {
 		.time = time,
@@ -2469,8 +2437,6 @@ tablet_notify_proximity(struct libinput_device *device,
 	struct libinput_event_tablet_tool *proximity_event;
 
 	proximity_event = zalloc(sizeof *proximity_event);
-	if (!proximity_event)
-		return;
 
 	*proximity_event = (struct libinput_event_tablet_tool) {
 		.time = time,
@@ -2500,8 +2466,6 @@ tablet_notify_tip(struct libinput_device *device,
 	struct libinput_event_tablet_tool *tip_event;
 
 	tip_event = zalloc(sizeof *tip_event);
-	if (!tip_event)
-		return;
 
 	*tip_event = (struct libinput_event_tablet_tool) {
 		.time = time,
@@ -2533,8 +2497,6 @@ tablet_notify_button(struct libinput_device *device,
 	int32_t seat_button_count;
 
 	button_event = zalloc(sizeof *button_event);
-	if (!button_event)
-		return;
 
 	seat_button_count = update_seat_button_count(device->seat,
 						     button,
@@ -2568,8 +2530,6 @@ tablet_pad_notify_button(struct libinput_device *device,
 	unsigned int mode;
 
 	button_event = zalloc(sizeof *button_event);
-	if (!button_event)
-		return;
 
 	mode = libinput_tablet_pad_mode_group_get_mode(group);
 
@@ -2599,8 +2559,6 @@ tablet_pad_notify_ring(struct libinput_device *device,
 	unsigned int mode;
 
 	ring_event = zalloc(sizeof *ring_event);
-	if (!ring_event)
-		return;
 
 	mode = libinput_tablet_pad_mode_group_get_mode(group);
 
@@ -2631,8 +2589,6 @@ tablet_pad_notify_strip(struct libinput_device *device,
 	unsigned int mode;
 
 	strip_event = zalloc(sizeof *strip_event);
-	if (!strip_event)
-		return;
 
 	mode = libinput_tablet_pad_mode_group_get_mode(group);
 
@@ -2668,8 +2624,6 @@ gesture_notify(struct libinput_device *device,
 		return;
 
 	gesture_event = zalloc(sizeof *gesture_event);
-	if (!gesture_event)
-		return;
 
 	*gesture_event = (struct libinput_event_gesture) {
 		.time = time,
@@ -2748,8 +2702,6 @@ switch_notify_toggle(struct libinput_device *device,
 		return;
 
 	switch_event = zalloc(sizeof *switch_event);
-	if (!switch_event)
-		return;
 
 	*switch_event = (struct libinput_event_switch) {
 		.time = time,
@@ -2972,6 +2924,13 @@ LIBINPUT_EXPORT int
 libinput_device_keyboard_has_key(struct libinput_device *device, uint32_t code)
 {
 	return evdev_device_has_key((struct evdev_device *)device, code);
+}
+
+LIBINPUT_EXPORT int
+libinput_device_switch_has_switch(struct libinput_device *device,
+				  enum libinput_switch sw)
+{
+	return evdev_device_has_switch((struct evdev_device *)device, sw);
 }
 
 LIBINPUT_EXPORT int
@@ -3356,17 +3315,8 @@ libinput_device_group_create(struct libinput *libinput,
 	struct libinput_device_group *group;
 
 	group = zalloc(sizeof *group);
-	if (!group)
-		return NULL;
-
 	group->refcount = 1;
-	if (identifier) {
-		group->identifier = strdup(identifier);
-		if (!group->identifier) {
-			free(group);
-			return NULL;
-		}
-	}
+	group->identifier = safe_strdup(identifier);
 
 	list_init(&group->link);
 	list_insert(&libinput->device_group_list, &group->link);
