@@ -1,5 +1,5 @@
 /*
- * Copyright © 2016 Red Hat, Inc.
+ * Copyright © 2017 Red Hat, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -27,44 +27,38 @@
 #include "litest-int.h"
 
 static struct input_event down[] = {
+	{ .type = EV_ABS, .code = ABS_X, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_Y, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_MT_SLOT, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_MT_TRACKING_ID, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_MT_POSITION_X, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_MT_POSITION_Y, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
 	{ .type = -1, .code = -1 },
 };
 
 static struct input_event move[] = {
+	{ .type = EV_ABS, .code = ABS_MT_SLOT, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_X, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_Y, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_MT_POSITION_X, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_ABS, .code = ABS_MT_POSITION_Y, .value = LITEST_AUTO_ASSIGN },
+	{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
 	{ .type = -1, .code = -1 },
 };
-
-static struct input_event ring_start[] = {
-	{ .type = EV_ABS, .code = ABS_WHEEL, .value = LITEST_AUTO_ASSIGN },
-	{ .type = EV_ABS, .code = ABS_MISC, .value = 15 },
-	{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
-	{ .type = -1, .code = -1 },
-} ;
-
-static struct input_event ring_change[] = {
-	{ .type = EV_ABS, .code = ABS_WHEEL, .value = LITEST_AUTO_ASSIGN },
-	{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
-	{ .type = -1, .code = -1 },
-} ;
-
-static struct input_event ring_end[] = {
-	{ .type = EV_ABS, .code = ABS_WHEEL, .value = 0 },
-	{ .type = EV_ABS, .code = ABS_MISC, .value = 0 },
-	{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
-	{ .type = -1, .code = -1 },
-} ;
 
 static struct litest_device_interface interface = {
 	.touch_down_events = down,
 	.touch_move_events = move,
-	.pad_ring_start_events = ring_start,
-	.pad_ring_change_events = ring_change,
-	.pad_ring_end_events = ring_end,
 };
+
 static struct input_absinfo absinfo[] = {
-	{ ABS_X, 0, 1, 0, 0, 0 },
-	{ ABS_Y, 0, 1, 0, 0, 0 },
-	{ ABS_WHEEL, 0, 71, 0, 0, 0 },
+	{ ABS_X, 0, 15360, 0, 0, 128 },
+	{ ABS_Y, 0, 10240, 0, 0, 128 },
+	{ ABS_MT_SLOT, 0, 1, 0, 0, 0 },
+	{ ABS_MT_POSITION_X, 0, 15360, 0, 0, 128 },
+	{ ABS_MT_POSITION_Y, 0, 10240, 0, 0, 128 },
+	{ ABS_MT_TRACKING_ID, 0, 65535, 0, 0, 0 },
 	{ ABS_MISC, 0, 0, 0, 0, 0 },
 	{ .value = -1 },
 };
@@ -72,40 +66,31 @@ static struct input_absinfo absinfo[] = {
 static struct input_id input_id = {
 	.bustype = 0x3,
 	.vendor = 0x56a,
-	.product = 0x333,
+	.product = 0xd1,
 	.version = 0x110,
 };
 
 static int events[] = {
-	EV_KEY, BTN_0,
-	EV_KEY, BTN_1,
-	EV_KEY, BTN_2,
-	EV_KEY, BTN_3,
-	EV_KEY, BTN_4,
-	EV_KEY, BTN_5,
-	EV_KEY, BTN_6,
-	EV_KEY, BTN_7,
-	EV_KEY, BTN_8,
-	EV_KEY, BTN_STYLUS,
+	EV_KEY, BTN_TOUCH,
+	INPUT_PROP_MAX, INPUT_PROP_DIRECT,
 	-1, -1,
 };
 
 static const char udev_rule[] =
-"ACTION==\"remove\", GOTO=\"pad_end\"\n"
-"KERNEL!=\"event*\", GOTO=\"pad_end\"\n"
+"ACTION==\"remove\", GOTO=\"rule_end\"\n"
+"KERNEL!=\"event*\", GOTO=\"rule_end\"\n"
 "\n"
-"ATTRS{name}==\"litest Wacom Cintiq 13 HD touch Pad*\",\\\n"
-"    ENV{ID_INPUT_TABLET_PAD}=\"1\",\\\n"
-"    ENV{LIBINPUT_DEVICE_GROUP}=\"wacom-13hdt-group\"\n"
+"ATTRS{name}==\"litest Wacom Bamboo 2FG 4x5 Finger*\",\\\n"
+"    ENV{LIBINPUT_DEVICE_GROUP}=\"wacom-bamboo-2fg-group\"\n"
 "\n"
-"LABEL=\"pad_end\"";
+"LABEL=\"rule_end\"";
 
-TEST_DEVICE("wacom-cintiq-13hdt-pad",
-	.type = LITEST_WACOM_CINTIQ_13HDT_PAD,
-	.features = LITEST_TABLET_PAD | LITEST_RING,
+TEST_DEVICE("wacom-bamboo-2fg-finger",
+	.type = LITEST_WACOM_BAMBOO_2FG_FINGER,
+	.features = LITEST_TOUCH,
 	.interface = &interface,
 
-	.name = "Wacom Cintiq 13 HD touch Pad",
+	.name = "Wacom Bamboo 2F 4x5 Finger",
 	.id = &input_id,
 	.events = events,
 	.absinfo = absinfo,

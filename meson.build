@@ -1,5 +1,5 @@
 project('libinput', 'c', 'cpp',
-	version : '1.9.0',
+	version : '1.9.1',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu99', 'warning_level=2' ],
 	meson_version : '>= 0.40.0')
@@ -456,7 +456,7 @@ configure_file(input : 'tools/libinput-measure-trackpoint-range.man',
 	       )
 
 if get_option('debug-gui')
-	dep_gtk = dependency('gtk+-3.0')
+	dep_gtk = dependency('gtk+-3.0', version : '>= 3.20')
 	dep_cairo = dependency('cairo')
 	dep_glib = dependency('glib-2.0')
 
@@ -573,6 +573,9 @@ if get_option('tests')
 		'test/litest-device-touch-screen.c',
 		'test/litest-device-touchscreen-fuzz.c',
 		'test/litest-device-uclogic-tablet.c',
+		'test/litest-device-wacom-bamboo-2fg-finger.c',
+		'test/litest-device-wacom-bamboo-2fg-pad.c',
+		'test/litest-device-wacom-bamboo-2fg-pen.c',
 		'test/litest-device-wacom-bamboo-16fg-pen.c',
 		'test/litest-device-wacom-cintiq-12wx-pen.c',
 		'test/litest-device-wacom-cintiq-13hdt-finger.c',
