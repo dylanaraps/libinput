@@ -27,6 +27,7 @@
 #include <check.h>
 #include <dirent.h>
 #include <errno.h>
+#include <libgen.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <getopt.h>
@@ -1071,20 +1072,35 @@ litest_install_model_quirks(struct list *created_files_list)
 	list_insert(created_files_list, &file->link);
 }
 
+static inline void
+mkdir_p(const char *dir)
+{
+	char *path, *parent;
+	int rc;
+
+	if (streq(dir, "/"))
+		return;
+
+	path = strdup(dir);
+	parent = dirname(path);
+
+	mkdir_p(parent);
+	rc = mkdir(dir, 0755);
+
+	if (rc == -1 && errno != EEXIST) {
+		litest_abort_msg("Failed to create directory %s (%s)\n",
+				 dir,
+				 strerror(errno));
+	}
+
+	free(path);
+}
+
 static void
 litest_init_udev_rules(struct list *created_files)
 {
-	int rc;
-
-	rc = mkdir(UDEV_RULES_D, 0755);
-	if (rc == -1 && errno != EEXIST)
-		litest_abort_msg("Failed to create udev rules directory (%s)\n",
-				 strerror(errno));
-
-	rc = mkdir(UDEV_HWDB_D, 0755);
-	if (rc == -1 && errno != EEXIST)
-		litest_abort_msg("Failed to create udev hwdb directory (%s)\n",
-				 strerror(errno));
+	mkdir_p(UDEV_RULES_D);
+	mkdir_p(UDEV_HWDB_D);
 
 	litest_install_model_quirks(created_files);
 	litest_init_all_device_udev_rules(created_files);
@@ -2002,7 +2018,10 @@ litest_hover_move_two_touches(struct litest_device *d,
 }
 
 void
-litest_button_click(struct litest_device *d, unsigned int button, bool is_press)
+litest_button_click_debounced(struct litest_device *d,
+			      struct libinput *li,
+			      unsigned int button,
+			      bool is_press)
 {
 
 	struct input_event *ev;
@@ -2013,7 +2032,9 @@ litest_button_click(struct litest_device *d, unsigned int button, bool is_press)
 
 	ARRAY_FOR_EACH(click, ev)
 		litest_event(d, ev->type, ev->code, ev->value);
+	libinput_dispatch(li);
 	litest_timeout_debounce();
+	libinput_dispatch(li);
 }
 
 void
@@ -2023,7 +2044,7 @@ litest_button_scroll(struct litest_device *dev,
 {
 	struct libinput *li = dev->libinput;
 
-	litest_button_click(dev, button, 1);
+	litest_button_click_debounced(dev, li, button, 1);
 
 	libinput_dispatch(li);
 	litest_timeout_buttonscroll();
@@ -2033,7 +2054,7 @@ litest_button_scroll(struct litest_device *dev,
 	litest_event(dev, EV_REL, REL_Y, dy);
 	litest_event(dev, EV_SYN, SYN_REPORT, 0);
 
-	litest_button_click(dev, button, 0);
+	litest_button_click_debounced(dev, li, button, 0);
 
 	libinput_dispatch(li);
 }
@@ -2041,7 +2062,14 @@ litest_button_scroll(struct litest_device *dev,
 void
 litest_keyboard_key(struct litest_device *d, unsigned int key, bool is_press)
 {
-	litest_button_click(d, key, is_press);
+	struct input_event *ev;
+	struct input_event click[] = {
+		{ .type = EV_KEY, .code = key, .value = is_press ? 1 : 0 },
+		{ .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
+	};
+
+	ARRAY_FOR_EACH(click, ev)
+		litest_event(d, ev->type, ev->code, ev->value);
 }
 
 void
@@ -3154,7 +3182,7 @@ litest_timeout_tapndrag(void)
 void
 litest_timeout_debounce(void)
 {
-	msleep(15);
+	msleep(30);
 }
 
 void

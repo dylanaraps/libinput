@@ -26,9 +26,15 @@
 
 import sys
 import argparse
-import evdev
-import evdev.ecodes
-import pyudev
+try:
+    import evdev
+    import evdev.ecodes
+    import pyudev
+except ModuleNotFoundError as e:
+    print('Error: {}'.format(str(e)), file=sys.stderr)
+    print('One or more python modules are missing. Please install those '
+          'modules and re-run this tool.')
+    sys.exit(1)
 
 MINIMUM_EVENT_COUNT = 1000
 
@@ -53,6 +59,8 @@ class Device(object):
         self.path = path
 
         self.device = evdev.InputDevice(self.path)
+
+        print("Using {}: {}\n".format(self.device.name, path))
 
         self.deltas = []
         self.nxdeltas = 0
@@ -183,7 +191,7 @@ def main(args):
     except KeyboardInterrupt:
         device.print_summary()
     except (PermissionError, OSError):
-        print("Error: failed to open device")
+        print("Error: failed to open device. Are you running as root?")
     except InvalidDeviceError as e:
         print("Error: {}".format(e))
 
