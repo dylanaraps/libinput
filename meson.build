@@ -1,5 +1,5 @@
 project('libinput', 'c', 'cpp',
-	version : '1.9.4',
+	version : '1.10.0',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu99', 'warning_level=2' ],
 	meson_version : '>= 0.40.0')
@@ -145,7 +145,9 @@ src_libfilter = [
 		'src/filter.h',
 		'src/filter-private.h'
 ]
-libfilter = static_library('filter', src_libfilter)
+libfilter = static_library('filter', src_libfilter,
+			   dependencies : dep_udev,
+			   include_directories : includes_include)
 dep_libfilter = declare_dependency(link_with : libfilter)
 
 ############ libinput.so ############
@@ -291,6 +293,7 @@ if get_option('documentation')
 		meson.source_root() + '/doc/touchpad-jumping-cursors.dox',
 		meson.source_root() + '/doc/touchpad-pressure.dox',
 		meson.source_root() + '/doc/touchpads.dox',
+		meson.source_root() + '/doc/trackpoints.dox',
 		meson.source_root() + '/doc/what-is-libinput.dox',
 		# dot drawings
 		meson.source_root() + '/doc/dot/seats-sketch.gv',
@@ -417,14 +420,8 @@ configure_file(input : 'tools/libinput-measure.man',
 	       install_dir : join_paths(get_option('mandir'), 'man1')
 	       )
 
-libinput_measure_touchpad_tap_sources = [ 'tools/libinput-measure-touchpad-tap.c' ]
-executable('libinput-measure-touchpad-tap',
-	   libinput_measure_touchpad_tap_sources,
-	   dependencies : deps_tools,
-	   include_directories : [includes_src, includes_include],
-	   install_dir : libinput_tool_path,
-	   install : true,
-	   )
+install_data('tools/libinput-measure-touchpad-tap',
+	     install_dir : libinput_tool_path)
 configure_file(input : 'tools/libinput-measure-touchpad-tap.man',
 	       output : 'libinput-measure-touchpad-tap.1',
 	       configuration : man_config,
@@ -524,6 +521,10 @@ if get_option('tests')
 	dep_libunwind = dependency('libunwind', required : false)
 	config_h.set10('HAVE_LIBUNWIND', dep_libunwind.found())
 
+	# for inhibit support during test run
+	dep_libsystemd = dependency('libsystemd', required : false)
+	config_h.set10('HAVE_LIBSYSTEMD', dep_libsystemd.found())
+
 	lib_litest_sources = [
 		'test/litest.h',
 		'test/litest-int.h',
@@ -544,6 +545,7 @@ if get_option('tests')
 		'test/litest-device-generic-singletouch.c',
 		'test/litest-device-gpio-keys.c',
 		'test/litest-device-huion-pentablet.c',
+		'test/litest-device-hp-wmi-hotkeys.c',
 		'test/litest-device-ignored-mouse.c',
 		'test/litest-device-keyboard.c',
 		'test/litest-device-keyboard-all-codes.c',
@@ -611,7 +613,8 @@ if get_option('tests')
 		dep_udev,
 		dep_libevdev,
 		dep_dl,
-		dep_lm
+		dep_lm,
+		dep_libsystemd,
 	]
 
 	configure_file(input : 'udev/80-libinput-test-device.rules',
@@ -694,12 +697,14 @@ if get_option('tests')
 	# build-test only
         executable('test-build-pedantic',
 		   'test/build-pedantic.c',
+		   dependencies : [dep_udev],
 		   include_directories : [includes_src, includes_include],
 		   c_args : ['-std=c99', '-pedantic', '-Werror'],
 		   install : false)
 	# build-test only
         executable('test-build-std-gnuc90',
 		   'test/build-pedantic.c',
+		   dependencies : [dep_udev],
 		   include_directories : [includes_src, includes_include],
 		   c_args : ['-std=gnu90', '-Werror'],
 		   install : false)
@@ -712,6 +717,7 @@ if get_option('tests')
 	# test including from C++
 	executable('test-build-cxx',
 		   'test/build-cxx.cc',
+		   dependencies : [dep_udev],
 		   include_directories : [includes_src, includes_include],
 		   install : false)
 

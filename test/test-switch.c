@@ -691,7 +691,7 @@ START_TEST(lid_update_hw_on_key)
 	litest_event(keyboard, EV_SYN, SYN_REPORT, 0);
 	litest_drain_events(li);
 
-	libinput_dispatch(li2);
+	litest_wait_for_event(li2);
 	event = libinput_get_event(li2);
 	litest_is_switch_event(event,
 			       LIBINPUT_SWITCH_LID,
@@ -798,7 +798,7 @@ START_TEST(lid_update_hw_on_key_multiple_keyboards)
 	litest_event(keyboard2, EV_SYN, SYN_REPORT, 0);
 	litest_drain_events(li);
 
-	libinput_dispatch(li2);
+	litest_wait_for_event(li2);
 	event = libinput_get_event(li2);
 	litest_is_switch_event(event,
 			       LIBINPUT_SWITCH_LID,
@@ -819,8 +819,8 @@ START_TEST(lid_key_press)
 
 	litest_drain_events(li);
 
-	litest_keyboard_key(sw, KEY_POWER, true);
-	litest_keyboard_key(sw, KEY_POWER, false);
+	litest_keyboard_key(sw, KEY_VOLUMEUP, true);
+	litest_keyboard_key(sw, KEY_VOLUMEUP, false);
 	libinput_dispatch(li);
 
 	/* Check that we're routing key events from a lid device too */
@@ -1021,6 +1021,25 @@ START_TEST(tablet_mode_disable_trackpoint_on_init)
 }
 END_TEST
 
+START_TEST(dock_toggle)
+{
+	struct litest_device *sw = litest_current_device();
+	struct libinput *li = sw->libinput;
+
+	if (!libevdev_has_event_code(sw->evdev, EV_SW, SW_DOCK))
+		return;
+
+	litest_drain_events(li);
+
+	litest_event(sw, EV_SW, SW_DOCK, 1);
+	libinput_dispatch(li);
+
+	litest_event(sw, EV_SW, SW_DOCK, 0);
+	libinput_dispatch(li);
+
+	litest_assert_empty_queue(li);
+}
+END_TEST
 void
 litest_setup_tests_lid(void)
 {
@@ -1057,4 +1076,6 @@ litest_setup_tests_lid(void)
 	litest_add("tablet-mode:keyboard", tablet_mode_disable_keyboard_on_init, LITEST_SWITCH, LITEST_ANY);
 	litest_add("tablet-mode:trackpoint", tablet_mode_disable_trackpoint, LITEST_SWITCH, LITEST_ANY);
 	litest_add("tablet-mode:trackpoint", tablet_mode_disable_trackpoint_on_init, LITEST_SWITCH, LITEST_ANY);
+
+	litest_add("lid:dock", dock_toggle, LITEST_SWITCH, LITEST_ANY);
 }

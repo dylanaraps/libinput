@@ -27,6 +27,7 @@
 #define LITEST_H
 
 #include <stdbool.h>
+#include <stdarg.h>
 #include <check.h>
 #include <libevdev/libevdev.h>
 #include <libevdev/libevdev-uinput.h>
@@ -268,6 +269,7 @@ enum litest_device_type {
 	LITEST_WACOM_BAMBOO_2FG_PAD,
 	LITEST_WACOM_BAMBOO_2FG_PEN,
 	LITEST_WACOM_BAMBOO_2FG_FINGER,
+	LITEST_HP_WMI_HOTKEYS,
 };
 
 enum litest_device_feature {
@@ -602,6 +604,11 @@ litest_button_click_debounced(struct litest_device *d,
 			      bool is_press);
 
 void
+litest_button_click(struct litest_device *d,
+		    unsigned int button,
+		    bool is_press);
+
+void
 litest_button_scroll(struct litest_device *d,
 		     unsigned int button,
 		     double dx, double dy);
@@ -766,6 +773,9 @@ litest_timeout_trackpoint(void);
 
 void
 litest_timeout_tablet_proxout(void);
+
+void
+litest_timeout_hysteresis(void);
 
 void
 litest_push_event_frame(struct litest_device *dev);

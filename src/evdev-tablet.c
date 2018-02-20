@@ -1,6 +1,6 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
- * Copyright © 2014 Stephen Chandler "Lyude" Paul
+ * Copyright © 2014 Lyude Paul
  *
  * Permission to use, copy, modify, distribute, and sell this software and
  * its documentation for any purpose is hereby granted without fee, provided
@@ -672,8 +672,6 @@ tablet_update_button(struct tablet_dispatch *tablet,
 		     uint32_t enable)
 {
 	switch (evcode) {
-	case BTN_TOUCH:
-		return;
 	case BTN_LEFT:
 	case BTN_RIGHT:
 	case BTN_MIDDLE:
@@ -756,16 +754,6 @@ tablet_process_key(struct tablet_dispatch *tablet,
 						  TABLET_TOOL_LEAVING_CONTACT);
 		}
 		break;
-	case BTN_LEFT:
-	case BTN_RIGHT:
-	case BTN_MIDDLE:
-	case BTN_SIDE:
-	case BTN_EXTRA:
-	case BTN_FORWARD:
-	case BTN_BACK:
-	case BTN_TASK:
-	case BTN_STYLUS:
-	case BTN_STYLUS2:
 	default:
 		tablet_update_button(tablet, e->code, e->value);
 		break;
@@ -944,7 +932,17 @@ tool_set_bits(const struct tablet_dispatch *tablet,
 		copy_axis_cap(tablet, tool, LIBINPUT_TABLET_TOOL_AXIS_TILT_X);
 		copy_axis_cap(tablet, tool, LIBINPUT_TABLET_TOOL_AXIS_TILT_Y);
 		copy_axis_cap(tablet, tool, LIBINPUT_TABLET_TOOL_AXIS_SLIDER);
-		copy_axis_cap(tablet, tool, LIBINPUT_TABLET_TOOL_AXIS_ROTATION_Z);
+
+		/* Rotation is special, it can be either ABS_Z or
+		 * BTN_TOOL_MOUSE+ABS_TILT_X/Y. Aiptek tablets have
+		 * mouse+tilt (and thus rotation), but they do not have
+		 * ABS_Z. So let's not copy the axis bit if we don't have
+		 * ABS_Z, otherwise we try to get the value from it later on
+		 * proximity in and go boom because the absinfo isn't there.
+		 */
+		if (libevdev_has_event_code(tablet->device->evdev, EV_ABS,
+					    ABS_Z))
+			copy_axis_cap(tablet, tool, LIBINPUT_TABLET_TOOL_AXIS_ROTATION_Z);
 		break;
 	case LIBINPUT_TABLET_TOOL_TYPE_MOUSE:
 	case LIBINPUT_TABLET_TOOL_TYPE_LENS:
@@ -1056,11 +1054,11 @@ tablet_get_tool(struct tablet_dispatch *tablet,
 		if (pressure) {
 			tool->pressure_offset = pressure->minimum;
 
-			/* 5% of the pressure range */
+			/* 5 and 1% of the pressure range */
 			tool->pressure_threshold.upper =
 				axis_range_percentage(pressure, 5);
 			tool->pressure_threshold.lower =
-				pressure->minimum;
+				axis_range_percentage(pressure, 1);
 		}
 
 		tool_set_bits(tablet, tool);
@@ -1245,6 +1243,7 @@ detect_pressure_offset(struct tablet_dispatch *tablet,
 		 LIBINPUT_VERSION);
 	tool->pressure_offset = offset;
 	tool->has_pressure_offset = true;
+	tool->pressure_threshold.lower = pressure->minimum;
 }
 
 static void
@@ -1838,7 +1837,9 @@ tablet_check_initial_proximity(struct evdev_device *device,
 	int code, state;
 	enum libinput_tablet_tool_type tool;
 
-	for (tool = LIBINPUT_TABLET_TOOL_TYPE_PEN; tool <= LIBINPUT_TABLET_TOOL_TYPE_MAX; tool++) {
+	for (tool = LIBINPUT_TABLET_TOOL_TYPE_PEN;
+	     tool <= LIBINPUT_TABLET_TOOL_TYPE_MAX;
+	     tool++) {
 		code = tablet_tool_to_evcode(tool);
 
 		/* we only expect one tool to be in proximity at a time */

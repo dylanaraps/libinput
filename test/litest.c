@@ -36,6 +36,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <time.h>
 #include <unistd.h>
 #include "linux/input.h"
@@ -47,6 +48,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <libudev.h>
+#if HAVE_LIBSYSTEMD
+#include <systemd/sd-bus.h>
+#endif
 
 #include "litest.h"
 #include "litest-int.h"
@@ -632,7 +636,6 @@ litest_log_handler(struct libinput *libinput,
 		   va_list args)
 {
 	static int is_tty = -1;
-	static bool had_newline = true;
 	const char *priority = NULL;
 	const char *color;
 
@@ -658,11 +661,7 @@ litest_log_handler(struct libinput *libinput,
 
 	if (!is_tty)
 		color = "";
-
-	if (had_newline)
-		fprintf(stderr, "%slitest %s ", color, priority);
-
-	if (strstr(format, "tap state:"))
+	else if (strstr(format, "tap state:"))
 		color = ANSI_BLUE;
 	else if (strstr(format, "thumb state:"))
 		color = ANSI_YELLOW;
@@ -677,18 +676,20 @@ litest_log_handler(struct libinput *libinput,
 	else if (strstr(format, "edge state:"))
 		color = ANSI_BRIGHT_GREEN;
 
-	if (is_tty)
-		fprintf(stderr, "%s ", color);
-
+	fprintf(stderr, "%slitest %s ", color, priority);
 	vfprintf(stderr, format, args);
-	had_newline = strlen(format) >= 1 &&
-		      format[strlen(format) - 1] == '\n';
-	if (is_tty && had_newline)
+	if (is_tty)
 		fprintf(stderr, ANSI_NORMAL);
 
 	if (strstr(format, "client bug: ") ||
-	    strstr(format, "libinput bug: "))
+	    strstr(format, "libinput bug: ")) {
+		/* valgrind is too slow and some of our offsets are too
+		 * short, don't abort if during a valgrind run we get a
+		 * negative offset */
+		if (!getenv("USING_VALGRIND") ||
+		    !strstr(format, "offset negative"))
 		litest_abort_msg("libinput bug triggered, aborting.\n");
+	}
 }
 
 static char *
@@ -786,7 +787,7 @@ litest_free_test_list(struct list *tests)
 }
 
 static int
-litest_run_suite(struct list *tests, int which, int max)
+litest_run_suite(struct list *tests, int which, int max, int error_fd)
 {
 	int failed = 0;
 	SRunner *sr = NULL;
@@ -864,6 +865,19 @@ litest_run_suite(struct list *tests, int which, int max)
 
 	srunner_run_all(sr, CK_ENV);
 	failed = srunner_ntests_failed(sr);
+	if (failed) {
+		TestResult **trs;
+
+		trs = srunner_failures(sr);
+		for (int i = 0; i < failed; i++) {
+			dprintf(error_fd,
+				":: Failure: %s:%d:%s\n",
+				tr_lfile(trs[i]),
+				tr_lno(trs[i]),
+				tr_tcname(trs[i]));
+		}
+		free(trs);
+	}
 	srunner_free(sr);
 out:
 	list_for_each_safe(n, tmp, &testnames, node) {
@@ -881,14 +895,29 @@ litest_fork_subtests(struct list *tests, int max_forks)
 	int status;
 	pid_t pid;
 	int f;
+	int pipes[max_forks];
 
 	for (f = 0; f < max_forks; f++) {
+		int rc;
+		int pipefd[2];
+
+		rc = pipe2(pipefd, O_NONBLOCK|O_NONBLOCK);
+		assert(rc != -1);
+
 		pid = fork();
 		if (pid == 0) {
-			failed = litest_run_suite(tests, f, max_forks);
+			close(pipefd[0]);
+			failed = litest_run_suite(tests,
+						  f,
+						  max_forks,
+						  pipefd[1]);
+
 			litest_free_test_list(&all_tests);
 			exit(failed);
 			/* child always exits here */
+		} else {
+			pipes[f] = pipefd[0];
+			close(pipefd[1]);
 		}
 	}
 
@@ -898,13 +927,75 @@ litest_fork_subtests(struct list *tests, int max_forks)
 			failed = 1;
 	}
 
+	for (f = 0; f < max_forks; f++) {
+		char buf[1024] = {0};
+		int rc;
+
+		while ((rc = read(pipes[f], buf, sizeof(buf) - 1)) > 0) {
+			buf[rc] = '\0';
+			fprintf(stderr, "%s", buf);
+		}
+
+		close(pipes[f]);
+	}
+
 	return failed;
+}
+
+static inline int
+inhibit(void)
+{
+	int lock_fd = -1;
+#if HAVE_LIBSYSTEMD
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message *m = NULL;
+	sd_bus *bus = NULL;
+	int rc;
+
+	rc = sd_bus_open_system(&bus);
+	if (rc != 0) {
+		fprintf(stderr, "Warning: inhibit failed: %s\n", strerror(-rc));
+		goto out;
+	}
+
+	rc = sd_bus_call_method(bus,
+				"org.freedesktop.login1",
+				"/org/freedesktop/login1",
+				"org.freedesktop.login1.Manager",
+				"Inhibit",
+				&error,
+				&m,
+				"ssss",
+				"handle-lid-switch:handle-power-key:handle-suspend-key:handle-hibernate-key",
+				"libinput test-suite runner",
+				"testing in progress",
+				"block");
+	if (rc < 0) {
+		fprintf(stderr, "Warning: inhibit failed: %s\n", error.message);
+		goto out;
+	}
+
+	rc = sd_bus_message_read(m, "h", &lock_fd);
+	if (rc < 0) {
+		fprintf(stderr, "Warning: inhibit failed: %s\n", strerror(-rc));
+		goto out;
+	}
+
+	lock_fd = dup(lock_fd);
+out:
+	sd_bus_error_free(&error);
+	sd_bus_message_unref(m);
+	sd_bus_close(bus);
+	sd_bus_unref(bus);
+#endif
+	return lock_fd;
 }
 
 static inline int
 litest_run(int argc, char **argv)
 {
 	int failed = 0;
+	int inhibit_lock_fd;
 
 	list_init(&created_files_list);
 
@@ -921,10 +1012,14 @@ litest_run(int argc, char **argv)
 
 	litest_setup_sighandler(SIGINT);
 
+	inhibit_lock_fd = inhibit();
+
 	if (jobs == 1)
-		failed = litest_run_suite(&all_tests, 1, 1);
+		failed = litest_run_suite(&all_tests, 1, 1, STDERR_FILENO);
 	else
 		failed = litest_fork_subtests(&all_tests, jobs);
+
+	close(inhibit_lock_fd);
 
 	litest_free_test_list(&all_tests);
 
@@ -2018,12 +2113,10 @@ litest_hover_move_two_touches(struct litest_device *d,
 }
 
 void
-litest_button_click_debounced(struct litest_device *d,
-			      struct libinput *li,
-			      unsigned int button,
-			      bool is_press)
+litest_button_click(struct litest_device *d,
+		    unsigned int button,
+		    bool is_press)
 {
-
 	struct input_event *ev;
 	struct input_event click[] = {
 		{ .type = EV_KEY, .code = button, .value = is_press ? 1 : 0 },
@@ -2032,6 +2125,16 @@ litest_button_click_debounced(struct litest_device *d,
 
 	ARRAY_FOR_EACH(click, ev)
 		litest_event(d, ev->type, ev->code, ev->value);
+}
+
+void
+litest_button_click_debounced(struct litest_device *d,
+			      struct libinput *li,
+			      unsigned int button,
+			      bool is_press)
+{
+	litest_button_click(d, button, is_press);
+
 	libinput_dispatch(li);
 	litest_timeout_debounce();
 	libinput_dispatch(li);
@@ -3252,6 +3355,12 @@ litest_timeout_tablet_proxout(void)
 }
 
 void
+litest_timeout_hysteresis(void)
+{
+	msleep(90);
+}
+
+void
 litest_push_event_frame(struct litest_device *dev)
 {
 	litest_assert(dev->skip_ev_syn >= 0);
@@ -3595,6 +3704,13 @@ main(int argc, char **argv)
 		fprintf(stderr,
 			"%s must be run as root.\n",
 			program_invocation_short_name);
+		return 77;
+	}
+
+	if (access("/dev/uinput", F_OK) == -1 &&
+	    access("/dev/input/uinput", F_OK) == -1) {
+		fprintf(stderr,
+			"uinput device is missing, skipping tests.\n");
 		return 77;
 	}
 

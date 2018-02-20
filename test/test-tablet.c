@@ -1,6 +1,6 @@
 /*
  * Copyright © 2014-2015 Red Hat, Inc.
- * Copyright © 2014 Stephen Chandler "Lyude" Paul
+ * Copyright © 2014 Lyude Paul
  *
  * Permission to use, copy, modify, distribute, and sell this software and
  * its documentation for any purpose is hereby granted without fee, provided
@@ -29,6 +29,7 @@
 #include <libinput.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 #include "libinput-util.h"
 #include "evdev-tablet.h"
@@ -304,6 +305,7 @@ START_TEST(tip_up_prox_out)
 			 LIBINPUT_TABLET_TOOL_TIP_UP);
 	libinput_event_destroy(event);
 
+	litest_timeout_tablet_proxout();
 	libinput_dispatch(li);
 	event = libinput_get_event(li);
 	tablet_event = litest_is_tablet_event(event,
@@ -3457,7 +3459,7 @@ START_TEST(tablet_pressure_range)
 	litest_drain_events(li);
 	libinput_dispatch(li);
 
-	for (pressure = 1; pressure <= 100; pressure += 10) {
+	for (pressure = 10; pressure <= 100; pressure += 10) {
 		litest_axis_set_value(axes, ABS_PRESSURE, pressure);
 		litest_tablet_motion(dev, 70, 70, axes);
 		libinput_dispatch(li);

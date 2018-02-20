@@ -29,6 +29,7 @@
 #include <getopt.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <signal.h>
 #include <string.h>
 #include <time.h>
@@ -892,6 +893,8 @@ mainloop(struct libinput *li)
 
 	while (!stop && poll(&fds, 1, -1) > -1)
 		handle_and_print_events(li);
+
+	printf("\n");
 }
 
 static void

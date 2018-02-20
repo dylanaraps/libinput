@@ -29,6 +29,7 @@
 #include "config.h"
 
 #include <stdbool.h>
+#include <stdarg.h>
 #include "linux/input.h"
 #include <libevdev/libevdev.h>
 
@@ -621,6 +622,19 @@ evdev_to_left_handed(struct evdev_device *device,
  * calculation to do circular hysteresis are nontrivial, especially since
  * many touchpads have uneven x/y resolutions.
  *
+ * Given coordinates, 0, 1, 2, ... this is what we return for a margin of 3
+ * and a center of 0:
+ *
+ * Input:  1 2 3 4 5 6 5 4 3 2 1 0 -1
+ * Coord:  0 0 0 1 2 3 3 3 3 3 3 3 2
+ * Center: 0 0 0 1 2 3 3 3 3 3 3 3 2
+ *
+ * Problem: viewed from a stationary finger that starts moving, the
+ * hysteresis margin is M in both directions. Once we start moving
+ * continuously though, the margin is 0 in the movement direction and 2*M to
+ * change direction. That makes the finger less responsive to directional
+ * changes than to the original movement.
+ *
  * @param in The input coordinate
  * @param center Current center of the hysteresis
  * @param margin Hysteresis width (on each side)
@@ -653,22 +667,18 @@ evdev_log_msg_va(struct evdev_device *device,
 		 const char *format,
 		 va_list args)
 {
-	log_msg(evdev_libinput_context(device),
-		priority,
-		"%-7s - ",
-		evdev_device_get_sysname(device));
+	char buf[1024];
 
 	/* Anything info and above is user-visible, use the device name */
-	if (priority > LIBINPUT_LOG_PRIORITY_DEBUG)
-		log_msg(evdev_libinput_context(device),
-			priority,
-			"%s: ",
-			device->devname);
+	snprintf(buf,
+		 sizeof(buf),
+		 "%-7s - %s%s%s",
+		 evdev_device_get_sysname(device),
+		 (priority > LIBINPUT_LOG_PRIORITY_DEBUG) ?  device->devname : "",
+		 (priority > LIBINPUT_LOG_PRIORITY_DEBUG) ?  ": " : "",
+		 format);
 
-	log_msg_va(evdev_libinput_context(device),
-		   priority,
-		   format,
-		   args);
+	log_msg_va(evdev_libinput_context(device), priority, buf, args);
 }
 
 LIBINPUT_ATTRIBUTE_PRINTF(3, 4)

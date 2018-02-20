@@ -29,9 +29,9 @@
 extern "C" {
 #endif
 
-#include <stdarg.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdarg.h>
 
 #define LIBINPUT_ATTRIBUTE_PRINTF(_format, _args) \
 	__attribute__ ((format (printf, _format, _args)))
