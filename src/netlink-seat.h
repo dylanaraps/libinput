@@ -37,7 +37,6 @@ struct netlink_input {
 	struct libinput base;
 	struct libinput_source *source;
 	int sock;
-	char *seat_id;
 };
 
 #endif

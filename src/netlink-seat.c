@@ -263,12 +263,6 @@ netlink_input_enable(struct libinput *libinput)
 static void
 netlink_input_destroy(struct libinput *input)
 {
-	struct netlink_input *netlink_input = (struct netlink_input*)input;
-
-	if (input == NULL)
-		return;
-
-	free(netlink_input->seat_id);
 }
 
 static void
@@ -360,18 +354,10 @@ libinput_netlink_assign_seat(struct libinput *libinput,
 {
 	struct netlink_input *input = (struct netlink_input*)libinput;
 
-	if (!seat_id)
-		return -1;
-
 	if (libinput->interface_backend != &interface_backend) {
 		log_bug_client(libinput, "Mismatching backends.\n");
 		return -1;
 	}
-
-	if (input->seat_id != NULL)
-		return -1;
-
-	input->seat_id = safe_strdup(seat_id);
 
 	if (netlink_input_enable(&input->base) < 0)
 		return -1;
