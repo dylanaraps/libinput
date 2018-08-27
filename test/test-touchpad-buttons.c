@@ -781,8 +781,8 @@ START_TEST(touchpad_clickfinger_3fg_tool_position)
 	litest_drain_events(li);
 
 	/* one in thumb area, one in normal area + TRIPLETAP. spread is wide
-	 * but any 3fg touch+click counts as middle */
-	litest_touch_down(dev, 0, 5, 99);
+	 * but any non-palm 3fg touch+click counts as middle */
+	litest_touch_down(dev, 0, 20, 99);
 	litest_touch_down(dev, 1, 90, 15);
 	litest_event(dev, EV_KEY, BTN_TOOL_DOUBLETAP, 0);
 	litest_event(dev, EV_KEY, BTN_TOOL_TRIPLETAP, 1);
@@ -1978,8 +1978,7 @@ START_TEST(clickpad_middleemulation_click_disable_while_down)
 }
 END_TEST
 
-void
-litest_setup_tests_touchpad_buttons(void)
+TEST_COLLECTION(touchpad_buttons)
 {
 	litest_add("touchpad:clickfinger", touchpad_1fg_clickfinger, LITEST_CLICKPAD, LITEST_ANY);
 	litest_add("touchpad:clickfinger", touchpad_1fg_clickfinger_no_touch, LITEST_CLICKPAD, LITEST_ANY);

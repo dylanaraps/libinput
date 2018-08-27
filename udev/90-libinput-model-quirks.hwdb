@@ -13,7 +13,6 @@
 #	libinput:touchpad:<modalias>
 #	libinput:name:<name>:dmi:<dmi string>
 #	libinput:name:<name>:dt:<device-tree string>
-#	libinput:name:<name>:fwversion:<version>
 #
 # Sort by brand, model
 
@@ -33,15 +32,34 @@ libinput:keyboard:input:b0011v*
  LIBINPUT_ATTR_KEYBOARD_INTEGRATION=internal
 
 ##########################################
+# Aiptek
+##########################################
+libinput:tablet:input:b0003v08CAp*
+ LIBINPUT_MODEL_TABLET_NO_TILT=1
+
+##########################################
 # ALPS
 ##########################################
 libinput:name:*AlpsPS/2 ALPS DualPoint TouchPad:dmi:*
 libinput:name:*AlpsPS/2 ALPS GlidePoint:dmi:*
  LIBINPUT_MODEL_ALPS_TOUCHPAD=1
 
-libinput:name:*AlpsPS/2 ALPS DualPoint TouchPad:fwversion:800
-libinput:name:*AlpsPS/2 ALPS GlidePoint:fwversion:800
+# ALPS firmware versions:
+# V1		= 0x100
+# V2		= 0x200
+# V3		= 0x300
+# V3_RUSHMORE	= 0x310
+# V4		= 0x400
+# V5		= 0x500
+# V6		= 0x600
+# V7		= 0x700	/* t3btl t4s */
+# V8		= 0x800	/* SS4btl SS4s */
+# V9		= 0x900	/* ss3btl */
+libinput:touchpad:input:b0011v0002p0008e0800*
  LIBINPUT_ATTR_SIZE_HINT=100x55
+
+libinput:pointingstick:input:b0011v0002p0008e0800*
+ LIBINPUT_ATTR_TRACKPOINT_RANGE=160
 
 ##########################################
 # Apple
@@ -59,13 +77,18 @@ libinput:name:*Apple Inc. Apple Internal Keyboard*:dmi:*
 libinput:mouse:input:b0005v05ACp030D*
  LIBINPUT_MODEL_APPLE_MAGICMOUSE=1
 
-# Magic Trackpad
+# Apple Magic Trackpad v1 (2010, clickpad)
 libinput:touchpad:input:b0005v05ACp030E*
  LIBINPUT_ATTR_SIZE_HINT=130x110
- LIBINPUT_ATTR_TOUCH_SIZE_RANGE=60:40
+ LIBINPUT_ATTR_TOUCH_SIZE_RANGE=20:10
+ LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=900
 
 libinput:touchpad:input:b0003v05ACp021A*
  LIBINPUT_MODEL_APPLE_TOUCHPAD_ONEBUTTON=1
+
+# MacBookPro5,5 (Mid 2009)
+libinput:touchpad:input:b0003v05ACp0237*
+ LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=1000
 
 ##########################################
 # Asus
@@ -97,6 +120,14 @@ libinput:name:* Touchpad:dmi:*svnDellInc.:*
 libinput:name:*AlpsPS/2 ALPS GlidePoint:dmi:*svnDellInc.:pnLatitudeE6220:*
  LIBINPUT_ATTR_PRESSURE_RANGE=100:90
 
+libinput:name:*CyPS/2 Cypress Trackpad:dmi:*svnDell*:*XPSL322X*
+ LIBINPUT_ATTR_PRESSURE_RANGE=30:20
+ LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=254
+
+libinput:name:*Synaptics s3203:dmi:*svnDellInc.:*pnXPS139333*
+ LIBINPUT_ATTR_PRESSURE_RANGE=15:10
+ LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=150
+
 ##########################################
 # Elantech
 ##########################################
@@ -110,7 +141,7 @@ libinput:name:*ETPS/2 Elantech Touchpad*:dmi:*svnASUSTeKComputerInc.:pnUX21E:*
 libinput:name:*Elan Touchpad*:dt:*
  LIBINPUT_ATTR_PRESSURE_RANGE=10:8
 
-libinput:name:*Elan Touchpad*:dt:*Chrombook R13*
+libinput:name:*Elan Touchpad*:dt:*Chromebook R13 CB5-312T*
 libinput:name:*Elan Touchpad*:dt:*CB5-312T*
 libinput:name:*Elan Touchpad*:dt:*Elm*
  LIBINPUT_ATTR_PRESSURE_RANGE=6:4
@@ -143,6 +174,10 @@ libinput:name:Cypress APA Trackpad ?cyapa?:dmi:*
 ##########################################
 # HP
 ##########################################
+
+# HP Chromebook 14
+libinput:name:*Cypress APA Trackpad *cyapa*:dmi:*svnHewlett-Packard*:pnFalco*
+ LIBINPUT_ATTR_PRESSURE_RANGE=12:8
 
 # HP Compaq6910p
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnHewlett-Packard:*pnHPCompaq6910p*
@@ -179,6 +214,26 @@ libinput:tablet:input:b0003v256Cp*
  LIBINPUT_MODEL_TABLET_NO_PROXIMITY_OUT=1
 
 ##########################################
+# IBM
+##########################################
+#
+# IBM/Lenovo Scrollpoint mouse. Instead of a scroll wheel these mice
+# feature trackpoint-like sticks which generate a huge amount of scroll
+# events that need to be handled differently than scroll wheel events
+libinput:mouse:b0003v04B3p3100*
+libinput:mouse:b0003v04B3p3103*
+libinput:mouse:b0003v04B3p3105*
+libinput:mouse:b0003v04B3p3108*
+libinput:mouse:b0003v04B3p3109*
+libinput:mouse:b0003v17EFp6049*
+ LIBINPUT_MODEL_LENOVO_SCROLLPOINT=1
+
+# Lenovo Thinkpad X41 Tablet has lid buttons to be used in tablet mode
+# (#103749)
+libinput:name:AT Translated Set 2 keyboard:dmi:*svnIBM:*pvrThinkPadX41Tablet:*
+ LIBINPUT_MODEL_TABLET_MODE_NO_SUSPEND=1
+
+##########################################
 # LENOVO
 ##########################################
 
@@ -198,17 +253,55 @@ libinput:tablet:input:b0003v256Cp*
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPadX230*
  LIBINPUT_MODEL_LENOVO_X230=1
 
+# T440p on PS/2
+libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPadT440p*
+# T440p on RMI4
+libinput:name:Synaptics tm2964-001:dmi:*svnLENOVO:*:pvrThinkPadT440p*
+ LIBINPUT_MODEL_LENOVO_T450_TOUCHPAD=1
+
+# T440s trackpoint
+libinput:name:TPPS/2 IBM TrackPoint:dmi:*svnLENOVO:*:pvrThinkPadT440s*
+ LIBINPUT_ATTR_TRACKPOINT_RANGE=30
+
+# T450s trackpoint
+libinput:name:TPPS/2 IBM TrackPoint:dmi:*svnLENOVO:*:pvrThinkPadT450s*
+ LIBINPUT_ATTR_TRACKPOINT_RANGE=50
+
 # Lenovo T450/T460 and all other Lenovos of the *50 and *60 generation,
 # including the X1 Carbon 3rd gen
+libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPadP50*:
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPad??50*:
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPad??60*:
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPadX1Carbon3rd:*
  LIBINPUT_MODEL_LENOVO_T450_TOUCHPAD=1
  LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=150
 
+# Lenovo ThinkPad series
+libinput:name:*Synaptics*:dmi:*svnLENOVO:*:pvrThinkPad*:*
+ LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD=100
+
 # Lenovo ThinkPad Compact USB Keyboard with TrackPoint
 libinput:keyboard:input:b0003v17EFp6047*
  LIBINPUT_ATTR_KEYBOARD_INTEGRATION=external
+
+# Lenovo X270
+libinput:name:*TPPS/2 IBM TrackPoint*:dmi:svnLENOVO:*:pvrThinkPadX270:*
+ LIBINPUT_ATTR_TRACKPOINT_RANGE=40
+
+# Lenovo X280
+libinput:name:*ALPS TrackPoint*:dmi:svnLENOVO:*:pvrThinkPadX280:*
+ LIBINPUT_ATTR_TRACKPOINT_RANGE=70
+
+# Lenovo Thinkpad Yoga (not the consumer versions) disables the keyboard
+# mechanically. We must not disable the keyboard because some keys are
+# still accessible on the screen and volume rocker.
+# Initially #103749 and extended by #106799 comment 7
+libinput:name:AT Translated Set 2 keyboard:dmi:*svnLENOVO:*pvrThinkPad*Yoga*:*
+ LIBINPUT_MODEL_TABLET_MODE_NO_SUSPEND=1
+
+# Lenovo Carbon X1 6th gen (RMI4 only, PS/2 is broken on this device)
+libinput:name:Synaptics TM3288-011:dmi:*svnLenovo:*pvrThinkPadX1Carbon6th:*
+ LIBINPUT_MODEL_LENOVO_CARBON_X1_6TH=1
 
 ##########################################
 # Logitech
@@ -219,6 +312,20 @@ libinput:name:*Logitech M570*:dmi:*
 # Logitech Marble Mouse trackball
 libinput:mouse:input:b0003v046DpC408*
  LIBINPUT_MODEL_LOGITECH_MARBLE_MOUSE=1
+
+# Logitech K400
+libinput:mouse:input:b0003v046Dp4024*
+# Logitech K400r
+libinput:mouse:input:b0003v046Dp404B*
+# Logitech K830
+libinput:mouse:input:b0003v046Dp404C*
+# Logitech K400Plus
+libinput:mouse:input:b0003v046Dp404D*
+ LIBINPUT_MODEL_BOUNCING_KEYS=1
+
+# Logitech Wireless Touchpad
+libinput:touchpad:input:b0003v046Dp4011*
+ LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=400
 
 ##########################################
 # Microsoft
@@ -233,7 +340,7 @@ libinput:name:*Microsoft Surface Type Cover Keyboard*:dmi:*svnMicrosoftCorporati
 
 # Microsoft Microsoft® Nano Transceiver v2.0"
 libinput:mouse:input:b0003v045Ep0800*
- LIBINPUT_MODEL_MS_NANO_TRANSCEIVER=1
+ LIBINPUT_MODEL_BOUNCING_KEYS=1
 
 ##########################################
 # Razer
@@ -275,6 +382,10 @@ libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnSystem76*pvrkudp1*
 ##########################################
 libinput:touchpad:input:b0003v056Ap*
  LIBINPUT_MODEL_WACOM_TOUCHPAD=1
+
+# Wacom Intuos Pro PTH-660
+libinput:touchpad:input:b0003v056Ap0357*
+ LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=5
 
 ##########################################
 # Anything that has trackball in the name

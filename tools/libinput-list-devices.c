@@ -371,6 +371,7 @@ main(int argc, char **argv)
 {
 	struct libinput *li;
 	struct libinput_event *ev;
+	bool grab = false;
 
 	/* This is kept for backwards-compatibility with the old
 	   libinput-list-devices */
@@ -387,7 +388,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	li = tools_open_backend(BACKEND_UDEV, "seat0", false, false);
+	li = tools_open_backend(BACKEND_UDEV, "seat0", false, &grab);
 	if (!li)
 		return 1;
 

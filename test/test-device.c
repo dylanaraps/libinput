@@ -1190,9 +1190,9 @@ START_TEST(device_udev_tag_apple)
 
 	d = libinput_device_get_udev_device(device);
 	prop = udev_device_get_property_value(d,
-					      "LIBINPUT_MODEL_WACOM_TOUCHPAD");
+					      "LIBINPUT_MODEL_APPLE_TOUCHPAD");
 
-	if (libevdev_get_id_vendor(dev->evdev) == VENDOR_ID_WACOM)
+	if (libevdev_get_id_vendor(dev->evdev) == VENDOR_ID_APPLE)
 		ck_assert_notnull(prop);
 	else
 		ck_assert(prop == NULL);
@@ -1577,8 +1577,7 @@ START_TEST(device_seat_phys_name)
 }
 END_TEST
 
-void
-litest_setup_tests_device(void)
+TEST_COLLECTION(device)
 {
 	struct range abs_range = { 0, ABS_MISC };
 	struct range abs_mt_range = { ABS_MT_SLOT + 1, ABS_CNT };

@@ -72,6 +72,7 @@ enum evdev_device_tags {
 	EVDEV_TAG_INTERNAL_KEYBOARD = (1 << 6),
 	EVDEV_TAG_EXTERNAL_KEYBOARD = (1 << 7),
 	EVDEV_TAG_TABLET_MODE_SWITCH = (1 << 8),
+	EVDEV_TAG_TABLET_TOUCHPAD = (1 << 9),
 };
 
 enum evdev_middlebutton_state {
@@ -109,8 +110,9 @@ enum evdev_device_model {
 	EVDEV_MODEL_WACOM_TOUCHPAD = (1 << 7),
 	EVDEV_MODEL_ALPS_TOUCHPAD = (1 << 8),
 	EVDEV_MODEL_SYNAPTICS_SERIAL_TOUCHPAD = (1 << 9),
-	EVDEV_MODEL_JUMPING_SEMI_MT = (1 << 10),
+	EVDEV_MODEL_BOUNCING_KEYS = (1 << 11),
 	EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81 = (1 << 12),
+	EVDEV_MODEL_LENOVO_CARBON_X1_6TH = (1 << 13),
 	EVDEV_MODEL_CYBORG_RAT = (1 << 14),
 	EVDEV_MODEL_HP_STREAM11_TOUCHPAD = (1 << 16),
 	EVDEV_MODEL_LENOVO_T450_TOUCHPAD= (1 << 17),
@@ -124,7 +126,9 @@ enum evdev_device_model {
 	EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON = (1 << 25),
 	EVDEV_MODEL_LOGITECH_MARBLE_MOUSE = (1 << 26),
 	EVDEV_MODEL_TABLET_NO_PROXIMITY_OUT = (1 << 27),
-	EVDEV_MODEL_MS_NANO_TRANSCEIVER = (1 << 28),
+	EVDEV_MODEL_TABLET_NO_TILT = (1 << 29),
+	EVDEV_MODEL_TABLET_MODE_NO_SUSPEND = (1 << 30),
+	EVDEV_MODEL_LENOVO_SCROLLPOINT = (1 << 31),
 };
 
 enum evdev_button_scroll_state {
@@ -326,7 +330,8 @@ struct evdev_dispatch_interface {
 	 * enable/disable touch capabilities */
 	void (*toggle_touch)(struct evdev_dispatch *dispatch,
 			     struct evdev_device *device,
-			     bool enable);
+			     bool enable,
+			     uint64_t now);
 
 	/* Return the state of the given switch */
 	enum libinput_switch_state
@@ -376,6 +381,9 @@ evdev_init_calibration(struct evdev_device *device,
 
 void
 evdev_read_calibration_prop(struct evdev_device *device);
+
+int
+evdev_read_fuzz_prop(struct evdev_device *device, unsigned int code);
 
 enum switch_reliability
 evdev_read_switch_reliability_prop(struct evdev_device *device);
@@ -457,6 +465,9 @@ evdev_device_has_button(struct evdev_device *device, uint32_t code);
 
 int
 evdev_device_has_key(struct evdev_device *device, uint32_t code);
+
+int
+evdev_device_get_touch_count(struct evdev_device *device);
 
 int
 evdev_device_has_switch(struct evdev_device *device,
@@ -575,6 +586,17 @@ evdev_convert_to_mm(const struct input_absinfo *absinfo, double v)
 {
 	double value = v - absinfo->minimum;
 	return value/absinfo->resolution;
+}
+
+static inline struct phys_coords
+evdev_convert_xy_to_mm(const struct evdev_device *device, int x, int y)
+{
+	struct phys_coords mm;
+
+	mm.x = evdev_convert_to_mm(device->abs.absinfo_x, x);
+	mm.y = evdev_convert_to_mm(device->abs.absinfo_y, y);
+
+	return mm;
 }
 
 void
@@ -905,10 +927,25 @@ evdev_device_check_abs_axis_range(struct evdev_device *device,
 		log_info_ratelimit(evdev_libinput_context(device),
 				   &device->abs.warning_range.range_warn_limit,
 				   "Axis %#x value %d is outside expected range [%d, %d]\n"
-				   "See %s/absolute_coordinate_ranges.html for details\n",
+				   "See %sabsolute_coordinate_ranges.html for details\n",
 				   code, value, min, max,
 				   HTTP_DOC_LINK);
 	}
+}
+
+struct evdev_paired_keyboard {
+	struct list link;
+	struct evdev_device *device;
+	struct libinput_event_listener listener;
+};
+
+static inline void
+evdev_paired_keyboard_destroy(struct evdev_paired_keyboard *kbd)
+{
+	kbd->device = NULL;
+	libinput_device_remove_event_listener(&kbd->listener);
+	list_remove(&kbd->link);
+	free(kbd);
 }
 
 #endif /* EVDEV_H */

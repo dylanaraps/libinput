@@ -48,7 +48,7 @@ static const uint32_t screen_width = 100;
 static const uint32_t screen_height = 100;
 static struct tools_options options;
 static bool show_keycodes;
-static unsigned int stop = 0;
+static volatile sig_atomic_t stop = 0;
 static bool be_quiet = false;
 
 #define printq(...) ({ if (!be_quiet)  printf(__VA_ARGS__); })
@@ -273,6 +273,10 @@ print_device_notify(struct libinput_event *ev)
 
 	if (libinput_device_get_size(dev, &w, &h) == 0)
 		printq("  size %.0fx%.0fmm", w, h);
+
+	if (libinput_device_has_capability(dev,
+					   LIBINPUT_DEVICE_CAP_TOUCH))
+		printq(" ntouches %d", libinput_device_touch_get_touch_count(dev));
 
 	if (libinput_event_get_type(ev) == LIBINPUT_EVENT_DEVICE_ADDED)
 		print_device_options(dev);
@@ -987,7 +991,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	li = tools_open_backend(backend, seat_or_device, verbose, grab);
+	li = tools_open_backend(backend, seat_or_device, verbose, &grab);
 	if (!li)
 		return 1;
 

@@ -103,7 +103,7 @@ bool list_empty(const struct list *list);
 	     pos = list_first_entry(&pos->member, pos, member))
 
 #define list_for_each_safe(pos, tmp, head, member)			\
-	for (pos = 0, tmp = 0, 						\
+	for (pos = 0, tmp = 0,						\
 	     pos = list_first_entry(head, pos, member),			\
 	     tmp = list_first_entry(&pos->member, tmp, member);		\
 	     &pos->member != (head);					\
@@ -420,6 +420,7 @@ bool parse_calibration_property(const char *prop, float calibration[6]);
 bool parse_range_property(const char *prop, int *hi, int *lo);
 int parse_palm_pressure_property(const char *prop);
 int parse_palm_size_property(const char *prop);
+int parse_thumb_pressure_property(const char *prop);
 
 enum tpkbcombo_layout {
 	TPKBCOMBO_LAYOUT_UNKNOWN,
@@ -544,6 +545,7 @@ safe_atod(const char *str, double *val)
 }
 
 char **strv_from_string(const char *string, const char *separator);
+char *strv_join(char **strv, const char *separator);
 
 static inline void
 strv_free(char **strv) {
@@ -561,4 +563,67 @@ strv_free(char **strv) {
 	free (strv);
 }
 
+struct key_value_double {
+	double key;
+	double value;
+};
+
+static inline ssize_t
+kv_double_from_string(const char *string,
+		      const char *pair_separator,
+		      const char *kv_separator,
+		      struct key_value_double **result_out)
+
+{
+	char **pairs;
+	char **pair;
+	struct key_value_double *result = NULL;
+	ssize_t npairs = 0;
+	unsigned int idx = 0;
+
+	if (!pair_separator || pair_separator[0] == '\0' ||
+	    !kv_separator || kv_separator[0] == '\0')
+		return -1;
+
+	pairs = strv_from_string(string, pair_separator);
+	if (!pairs)
+		return -1;
+
+	for (pair = pairs; *pair; pair++)
+		npairs++;
+
+	if (npairs == 0)
+		goto error;
+
+	result = zalloc(npairs * sizeof *result);
+
+	for (pair = pairs; *pair; pair++) {
+		char **kv = strv_from_string(*pair, kv_separator);
+		double k, v;
+
+		if (!kv || !kv[0] || !kv[1] || kv[2] ||
+		    !safe_atod(kv[0], &k) ||
+		    !safe_atod(kv[1], &v)) {
+			strv_free(kv);
+			goto error;
+		}
+
+		result[idx].key = k;
+		result[idx].value = v;
+		idx++;
+
+		strv_free(kv);
+	}
+
+	strv_free(pairs);
+
+	*result_out = result;
+
+	return npairs;
+
+error:
+	strv_free(pairs);
+	free(result);
+	return -1;
+}
 #endif /* LIBINPUT_UTIL_H */

@@ -56,6 +56,8 @@
 #include "litest-int.h"
 #include "libinput-util.h"
 
+#include <linux/kd.h>
+
 #define UDEV_RULES_D "/run/udev/rules.d"
 #define UDEV_RULE_PREFIX "99-litest-"
 #define UDEV_HWDB_D "/etc/udev/hwdb.d"
@@ -661,7 +663,7 @@ litest_log_handler(struct libinput *libinput,
 
 	if (!is_tty)
 		color = "";
-	else if (strstr(format, "tap state:"))
+	else if (strstr(format, "tap:"))
 		color = ANSI_BLUE;
 	else if (strstr(format, "thumb state:"))
 		color = ANSI_YELLOW;
@@ -673,7 +675,7 @@ litest_log_handler(struct libinput *libinput,
 	else if (strstr(format, "palm:") ||
 		 strstr(format, "thumb:"))
 		color = ANSI_CYAN;
-	else if (strstr(format, "edge state:"))
+	else if (strstr(format, "edge-scroll:"))
 		color = ANSI_BRIGHT_GREEN;
 
 	fprintf(stderr, "%slitest %s ", color, priority);
@@ -1224,20 +1226,22 @@ litest_init_device_udev_rules(struct litest_test_device *dev)
 	int fd;
 	FILE *f;
 	char *path = NULL;
+	static int count;
 
 	if (!dev->udev_rule)
 		return NULL;
 
 	rc = xasprintf(&path,
-		      "%s/%s%s-XXXXXX.rules",
+		      "%s/%s%03d-%s-XXXXXX.rules",
 		      UDEV_RULES_D,
 		      UDEV_RULE_PREFIX,
+		      ++count,
 		      dev->shortname);
 	litest_assert_int_eq(rc,
 			     (int)(
 				   strlen(UDEV_RULES_D) +
 				   strlen(UDEV_RULE_PREFIX) +
-				   strlen(dev->shortname) + 14));
+				   strlen(dev->shortname) + 18));
 
 	fd = mkstemps(path, 6);
 	litest_assert_int_ne(fd, -1);
@@ -1443,11 +1447,78 @@ litest_create_device(enum litest_device_type which)
 	return litest_create_device_with_overrides(which, NULL, NULL, NULL, NULL);
 }
 
+static struct udev_monitor *
+udev_setup_monitor(void)
+{
+	struct udev *udev;
+	struct udev_monitor *udev_monitor;
+	int rc;
+
+	udev = udev_new();
+	litest_assert_notnull(udev);
+	udev_monitor = udev_monitor_new_from_netlink(udev, "udev");
+	litest_assert_notnull(udev_monitor);
+	udev_monitor_filter_add_match_subsystem_devtype(udev_monitor, "input",
+							NULL);
+
+
+	/* remove O_NONBLOCK */
+	rc = fcntl(udev_monitor_get_fd(udev_monitor), F_SETFL, 0);
+	litest_assert_int_ne(rc, -1);
+	litest_assert_int_eq(udev_monitor_enable_receiving(udev_monitor),
+			     0);
+	udev_unref(udev);
+
+	return udev_monitor;
+}
+
+static struct udev_device *
+udev_wait_for_device_event(struct udev_monitor *udev_monitor,
+			   const char *udev_event,
+			   const char *syspath)
+{
+	struct udev_device *udev_device = NULL;
+
+	/* blocking, we don't want to continue until udev is ready */
+	while (1) {
+		const char *udev_syspath = NULL;
+		const char *udev_action;
+
+		udev_device = udev_monitor_receive_device(udev_monitor);
+		litest_assert_notnull(udev_device);
+		udev_action = udev_device_get_action(udev_device);
+		if (!streq(udev_action, udev_event)) {
+			udev_device_unref(udev_device);
+			continue;
+		}
+
+		udev_syspath = udev_device_get_syspath(udev_device);
+		if (udev_syspath && strneq(udev_syspath,
+					   syspath,
+					   strlen(syspath)))
+			break;
+
+		udev_device_unref(udev_device);
+	}
+
+	return udev_device;
+}
+
 void
 litest_delete_device(struct litest_device *d)
 {
+
+	struct udev_monitor *udev_monitor;
+	struct udev_device *udev_device;
+	char path[PATH_MAX];
+
 	if (!d)
 		return;
+
+	udev_monitor = udev_setup_monitor();
+	snprintf(path, sizeof(path),
+		 "%s/event",
+		 libevdev_uinput_get_syspath(d->uinput));
 
 	litest_assert_int_eq(d->skip_ev_syn, 0);
 
@@ -1463,6 +1534,12 @@ litest_delete_device(struct litest_device *d)
 	free(d->private);
 	memset(d,0, sizeof(*d));
 	free(d);
+
+	udev_device = udev_wait_for_device_event(udev_monitor,
+						 "remove",
+						 path);
+	udev_device_unref(udev_device);
+	udev_monitor_unref(udev_monitor);
 }
 
 void
@@ -2529,8 +2606,9 @@ litest_print_event(struct libinput_event *event)
 	type = libinput_event_get_type(event);
 
 	fprintf(stderr,
-		"device %s type %s ",
+		"device %s (%s) type %s ",
 		libinput_device_get_sysname(dev),
+		libinput_device_get_name(dev),
 		litest_event_get_type_str(event));
 	switch (type) {
 	case LIBINPUT_EVENT_POINTER_MOTION:
@@ -2564,7 +2642,7 @@ litest_print_event(struct libinput_event *event)
 				LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL))
 			x = libinput_event_pointer_get_axis_value(p,
 				LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
-		fprintf(stderr, "vert %.f horiz %.2f", y, x);
+		fprintf(stderr, "vert %.2f horiz %.2f", y, x);
 		break;
 	case LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY:
 		t = libinput_event_get_tablet_tool_event(event);
@@ -2617,11 +2695,14 @@ litest_assert_event_type(struct libinput_event *event,
 		return;
 
 	fprintf(stderr,
-		"FAILED EVENT TYPE: have %s (%d) but want %s (%d)\n",
+		"FAILED EVENT TYPE: %s: have %s (%d) but want %s (%d)\n",
+		libinput_device_get_name(libinput_event_get_device(event)),
 		litest_event_get_type_str(event),
 		libinput_event_get_type(event),
 		litest_event_type_str(want),
 		want);
+	fprintf(stderr, "Wrong event is: ");
+	litest_print_event(event);
 	litest_backtrace();
 	abort();
 }
@@ -2759,52 +2840,22 @@ litest_create_uinput_device_from_description(const char *name,
 	const char *syspath;
 	char path[PATH_MAX];
 
-	struct udev *udev;
 	struct udev_monitor *udev_monitor;
 	struct udev_device *udev_device;
-	const char *udev_action;
-	const char *udev_syspath = NULL;
-	int rc;
 
-	udev = udev_new();
-	litest_assert_notnull(udev);
-	udev_monitor = udev_monitor_new_from_netlink(udev, "udev");
-	litest_assert_notnull(udev_monitor);
-	udev_monitor_filter_add_match_subsystem_devtype(udev_monitor, "input",
-							NULL);
-	/* remove O_NONBLOCK */
-	rc = fcntl(udev_monitor_get_fd(udev_monitor), F_SETFL, 0);
-	litest_assert_int_ne(rc, -1);
-	litest_assert_int_eq(udev_monitor_enable_receiving(udev_monitor),
-			     0);
+	udev_monitor = udev_setup_monitor();
 
 	uinput = litest_create_uinput(name, id, abs_info, events);
 
 	syspath = libevdev_uinput_get_syspath(uinput);
 	snprintf(path, sizeof(path), "%s/event", syspath);
 
-	/* blocking, we don't want to continue until udev is ready */
-	while (1) {
-		udev_device = udev_monitor_receive_device(udev_monitor);
-		litest_assert_notnull(udev_device);
-		udev_action = udev_device_get_action(udev_device);
-		if (strcmp(udev_action, "add") != 0) {
-			udev_device_unref(udev_device);
-			continue;
-		}
-
-		udev_syspath = udev_device_get_syspath(udev_device);
-		if (udev_syspath && strneq(udev_syspath, path, strlen(path)))
-			break;
-
-		udev_device_unref(udev_device);
-	}
+	udev_device = udev_wait_for_device_event(udev_monitor, "add", path);
 
 	litest_assert(udev_device_get_property_value(udev_device, "ID_INPUT"));
 
 	udev_device_unref(udev_device);
 	udev_monitor_unref(udev_monitor);
-	udev_unref(udev);
 
 	return uinput;
 }
@@ -3351,7 +3402,13 @@ litest_timeout_trackpoint(void)
 void
 litest_timeout_tablet_proxout(void)
 {
-	msleep(70);
+	msleep(170);
+}
+
+void
+litest_timeout_touch_arbitration(void)
+{
+	msleep(100);
 }
 
 void
@@ -3694,11 +3751,28 @@ litest_init_test_devices(void)
 	}
 }
 
+extern const struct test_collection __start_test_collection_section,
+				    __stop_test_collection_section;
+
+static void
+setup_tests(void)
+{
+	const struct test_collection *c;
+
+	for (c = &__start_test_collection_section;
+	     c < &__stop_test_collection_section;
+	     c++) {
+		c->setup();
+	}
+}
+
 int
 main(int argc, char **argv)
 {
 	const struct rlimit corelimit = { 0, 0 };
 	enum litest_mode mode;
+	int tty_mode = -1;
+	int failed_tests;
 
 	if (getuid() != 0) {
 		fprintf(stderr,
@@ -3729,23 +3803,7 @@ main(int argc, char **argv)
 	if (mode == LITEST_MODE_ERROR)
 		return EXIT_FAILURE;
 
-	litest_setup_tests_udev();
-	litest_setup_tests_path();
-	litest_setup_tests_pointer();
-	litest_setup_tests_touch();
-	litest_setup_tests_log();
-	litest_setup_tests_tablet();
-	litest_setup_tests_pad();
-	litest_setup_tests_touchpad();
-	litest_setup_tests_touchpad_tap();
-	litest_setup_tests_touchpad_buttons();
-	litest_setup_tests_trackpoint();
-	litest_setup_tests_trackball();
-	litest_setup_tests_misc();
-	litest_setup_tests_keyboard();
-	litest_setup_tests_device();
-	litest_setup_tests_gestures();
-	litest_setup_tests_lid();
+	setup_tests();
 
 	if (mode == LITEST_MODE_LIST) {
 		litest_list_tests(&all_tests);
@@ -3755,6 +3813,22 @@ main(int argc, char **argv)
 	if (setrlimit(RLIMIT_CORE, &corelimit) != 0)
 		perror("WARNING: Core dumps not disabled. Reason");
 
-	return litest_run(argc, argv);
+	/* If we're running 'normally' on the VT, disable the keyboard to
+	 * avoid messing up our host. But if we're inside gdb or running
+	 * without forking, leave it as-is.
+	 */
+	if (jobs > 1 &&
+	    !in_debugger &&
+	    getenv("CK_FORK") == NULL &&
+	    isatty(STDIN_FILENO) &&
+	    ioctl(STDIN_FILENO, KDGKBMODE, &tty_mode) == 0)
+		ioctl(STDIN_FILENO, KDSKBMODE, K_OFF);
+
+	failed_tests = litest_run(argc, argv);
+
+	if (tty_mode != -1)
+		ioctl(STDIN_FILENO, KDSKBMODE, tty_mode);
+
+	return failed_tests;
 }
 #endif

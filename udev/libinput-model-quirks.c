@@ -31,6 +31,7 @@
 #include <unistd.h>
 #include <libudev.h>
 #include <linux/input.h>
+#include <libevdev/libevdev.h>
 
 #include "libinput-util.h"
 
@@ -50,61 +51,59 @@ prop_value(struct udev_device *device,
 	return prop_value;
 }
 
+/**
+ * For a non-zero fuzz on the x/y axes, print that fuzz as property and
+ * reset the kernel's fuzz to 0.
+ * https://bugs.freedesktop.org/show_bug.cgi?id=105202
+ */
 static void
-handle_touchpad_alps(struct udev_device *device)
+handle_absfuzz(struct udev_device *device)
 {
-	const char *product;
-	int bus, vid, pid, version;
+	const char *devnode;
+	struct libevdev *evdev = NULL;
+	int fd = -1;
+	int rc;
+	unsigned int *code;
+	unsigned int axes[] = {ABS_X,
+			       ABS_Y,
+			       ABS_MT_POSITION_X,
+			       ABS_MT_POSITION_Y};
 
-	product = prop_value(device, "PRODUCT");
-	if (!product)
-		return;
+	devnode = udev_device_get_devnode(device);
+	if (!devnode)
+		goto out;
 
-	if (sscanf(product, "%x/%x/%x/%x", &bus, &vid, &pid, &version) != 4)
-		return;
+	fd = open(devnode, O_RDWR);
+	if (fd == -1 && errno == EACCES)
+		fd = open(devnode, O_RDONLY);
+	if (fd < 0)
+		goto out;
 
-	/* ALPS' firmware version is the version */
-	if (version)
-		printf("LIBINPUT_MODEL_FIRMWARE_VERSION=%x\n", version);
-}
+	rc = libevdev_new_from_fd(fd, &evdev);
+	if (rc != 0)
+		goto out;
 
-static void
-handle_touchpad_synaptics(struct udev_device *device)
-{
-	const char *product, *props;
-	int bus, vid, pid, version;
-	int prop;
+	if (!libevdev_has_event_type(evdev, EV_ABS))
+		goto out;
 
-	product = prop_value(device, "PRODUCT");
-	if (!product)
-		return;
+	ARRAY_FOR_EACH(axes, code) {
+		struct input_absinfo abs;
+		int fuzz;
 
-	if (sscanf(product, "%x/%x/%x/%x", &bus, &vid, &pid, &version) != 4)
-		return;
+		fuzz = libevdev_get_abs_fuzz(evdev, *code);
+		if (!fuzz)
+			continue;
 
-	if (bus != BUS_I8042 || vid != 0x2 || pid != 0x7)
-		return;
+		abs = *libevdev_get_abs_info(evdev, *code);
+		abs.fuzz = 0;
+		libevdev_kernel_set_abs_info(evdev, *code, &abs);
 
-	props = prop_value(device, "PROP");
-	if (sscanf(props, "%x", &prop) != 1)
-		return;
-	if (prop & (1 << INPUT_PROP_SEMI_MT))
-		printf("LIBINPUT_MODEL_JUMPING_SEMI_MT=1\n");
-}
+		printf("LIBINPUT_FUZZ_%02x=%d\n", *code, fuzz);
+	}
 
-static void
-handle_touchpad(struct udev_device *device)
-{
-	const char *name = NULL;
-
-	name = prop_value(device, "NAME");
-	if (!name)
-		return;
-
-	if (strstr(name, "AlpsPS/2 ALPS") != NULL)
-		handle_touchpad_alps(device);
-	if (strstr(name, "Synaptics ") != NULL)
-		handle_touchpad_synaptics(device);
+out:
+	close(fd);
+	libevdev_free(evdev);
 }
 
 int main(int argc, char **argv)
@@ -127,8 +126,7 @@ int main(int argc, char **argv)
 	if (!device)
 		goto out;
 
-	if (prop_value(device, "ID_INPUT_TOUCHPAD"))
-		handle_touchpad(device);
+	handle_absfuzz(device);
 
 	rc = 0;
 

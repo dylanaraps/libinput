@@ -60,6 +60,20 @@ struct test_device {
 		__VA_ARGS__ \
 	};
 
+struct test_collection {
+	const char *name;
+	void (*setup)(void);
+} __attribute__((aligned(16)));
+
+#define TEST_COLLECTION(name) \
+	static void (name##_setup)(void); \
+	static const struct test_collection _test_collection \
+	__attribute__ ((used)) \
+	__attribute__ ((section ("test_collection_section"))) = { \
+		#name, name##_setup \
+	}; \
+	static void (name##_setup)(void)
+
 extern void litest_setup_tests_udev(void);
 extern void litest_setup_tests_path(void);
 extern void litest_setup_tests_pointer(void);
@@ -271,6 +285,8 @@ enum litest_device_type {
 	LITEST_WACOM_BAMBOO_2FG_FINGER,
 	LITEST_HP_WMI_HOTKEYS,
 	LITEST_MS_NANO_TRANSCEIVER_MOUSE,
+	LITEST_AIPTEK,
+	LITEST_TOUCHSCREEN_INVALID_RANGE,
 };
 
 enum litest_device_feature {
@@ -305,6 +321,7 @@ enum litest_device_feature {
 	LITEST_SWITCH = 1 << 26,
 	LITEST_IGNORED = 1 << 27,
 	LITEST_NO_DEBOUNCE = 1 << 28,
+	LITEST_TOOL_MOUSE = 1 << 29,
 };
 
 /* this is a semi-mt device, so we keep track of the touches that the tests
@@ -777,6 +794,9 @@ void
 litest_timeout_tablet_proxout(void);
 
 void
+litest_timeout_touch_arbitration(void);
+
+void
 litest_timeout_hysteresis(void);
 
 void
@@ -992,12 +1012,51 @@ litest_disable_middleemu(struct litest_device *dev)
 	litest_assert_int_eq(status, expected);
 }
 
+static inline void
+litest_sendevents_off(struct litest_device *dev)
+{
+	struct libinput_device *device = dev->libinput_device;
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_send_events_set_mode(device,
+				    LIBINPUT_CONFIG_SEND_EVENTS_DISABLED);
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_sendevents_on(struct litest_device *dev)
+{
+	struct libinput_device *device = dev->libinput_device;
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_send_events_set_mode(device,
+				    LIBINPUT_CONFIG_SEND_EVENTS_ENABLED);
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_sendevents_ext_mouse(struct litest_device *dev)
+{
+	struct libinput_device *device = dev->libinput_device;
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_send_events_set_mode(device,
+				    LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE);
+	litest_assert_int_eq(status, expected);
+}
+
 static inline bool
 litest_touchpad_is_external(struct litest_device *dev)
 {
 	struct udev_device *udev_device;
 	const char *prop;
 	bool is_external;
+
+	if (libinput_device_get_id_vendor(dev->libinput_device) == VENDOR_ID_WACOM)
+		return true;
 
 	udev_device = libinput_device_get_udev_device(dev->libinput_device);
 	prop = udev_device_get_property_value(udev_device,

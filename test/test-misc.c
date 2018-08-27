@@ -1055,16 +1055,15 @@ START_TEST(palm_pressure_parser)
 		{ "1", 1 },
 		{ "10", 10 },
 		{ "255", 255 },
+		{ "360", 360 },
 
 		{ "-12", 0 },
-		{ "360", 0 },
 		{ "0", 0 },
 		{ "-0", 0 },
 		{ "a", 0 },
 		{ "10a", 0 },
 		{ "10-", 0 },
 		{ "sadfasfd", 0 },
-		{ "361", 0 },
 		{ NULL, 0 }
 	};
 
@@ -1292,6 +1291,95 @@ START_TEST(strsplit_test)
 }
 END_TEST
 
+struct kvsplit_dbl_test {
+	const char *string;
+	const char *psep;
+	const char *kvsep;
+	ssize_t nresults;
+	struct {
+		double a;
+		double b;
+	} results[32];
+};
+
+START_TEST(kvsplit_double_test)
+{
+	struct kvsplit_dbl_test tests[] = {
+		{ "1:2;3:4;5:6", ";", ":", 3, { {1, 2}, {3, 4}, {5, 6}}},
+		{ "1.0x2.3 -3.2x4.5 8.090909x-6.00", " ", "x", 3, { {1.0, 2.3}, {-3.2, 4.5}, {8.090909, -6}}},
+
+		{ "1:2", "x", ":", 1, {{1, 2}}},
+		{ "1:2", ":", "x", -1, {}},
+		{ "1:2", NULL, "x", -1, {}},
+		{ "1:2", "", "x", -1, {}},
+		{ "1:2", "x", NULL, -1, {}},
+		{ "1:2", "x", "", -1, {}},
+		{ "a:b", "x", ":", -1, {}},
+		{ "", " ", "x", -1, {}},
+		{ "1.2.3.4.5", ".", "", -1, {}},
+		{ NULL }
+	};
+	struct kvsplit_dbl_test *t = tests;
+
+	while (t->string) {
+		struct key_value_double *result = NULL;
+		ssize_t npairs;
+
+		npairs = kv_double_from_string(t->string,
+					       t->psep,
+					       t->kvsep,
+					       &result);
+		ck_assert_int_eq(npairs, t->nresults);
+
+		for (ssize_t i = 0; i < npairs; i++) {
+			ck_assert_double_eq(t->results[i].a, result[i].key);
+			ck_assert_double_eq(t->results[i].b, result[i].value);
+		}
+
+
+		free(result);
+		t++;
+	}
+}
+END_TEST
+
+struct strjoin_test {
+	char *strv[10];
+	const char *joiner;
+	const char *result;
+};
+
+START_TEST(strjoin_test)
+{
+	struct strjoin_test tests[] = {
+		{ { "one", "two", "three", NULL }, " ", "one two three" },
+		{ { "one", NULL }, "x", "one" },
+		{ { "one", "two", NULL }, "x", "onextwo" },
+		{ { "one", "two", NULL }, ",", "one,two" },
+		{ { "one", "two", NULL }, ", ", "one, two" },
+		{ { "one", "two", NULL }, "one", "oneonetwo" },
+		{ { "one", "two", NULL }, NULL, NULL },
+		{ { "", "", "", NULL }, " ", "  " },
+		{ { "a", "b", "c", NULL }, "", "abc" },
+		{ { "", "b", "c", NULL }, "x", "xbxc" },
+		{ { "", "", "", NULL }, "", "" },
+		{ { NULL }, NULL, NULL }
+	};
+	struct strjoin_test *t = tests;
+
+	while (t->strv[0]) {
+		char *str;
+		str = strv_join(t->strv, t->joiner);
+		if (t->result == NULL)
+			ck_assert(str == NULL);
+		else
+			ck_assert_str_eq(str, t->result);
+		free(str);
+		t++;
+	}
+}
+END_TEST
+
 static int open_restricted_leak(const char *path, int flags, void *data)
 {
 	return *(int*)data;
@@ -1492,8 +1580,7 @@ START_TEST(timer_flush)
 }
 END_TEST
 
-void
-litest_setup_tests_misc(void)
+TEST_COLLECTION(misc)
 {
 	litest_add_no_device("events:conversion", event_conversion_device_notify);
 	litest_add_for_device("events:conversion", event_conversion_pointer, LITEST_MOUSE);
@@ -1529,6 +1616,8 @@ litest_setup_tests_misc(void)
 	litest_add_no_device("misc:parser", safe_atoi_base_8_test);
 	litest_add_no_device("misc:parser", safe_atod_test);
 	litest_add_no_device("misc:parser", strsplit_test);
+	litest_add_no_device("misc:parser", kvsplit_double_test);
+	litest_add_no_device("misc:parser", strjoin_test);
 	litest_add_no_device("misc:time", time_conversion);
 
 	litest_add_no_device("misc:fd", fd_no_event_leak);

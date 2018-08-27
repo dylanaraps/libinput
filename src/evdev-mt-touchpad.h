@@ -61,6 +61,7 @@ enum touch_palm_state {
 	PALM_TOOL_PALM,
 	PALM_PRESSURE,
 	PALM_TOUCH_SIZE,
+	PALM_ARBITRATION,
 };
 
 enum button_event {
@@ -144,6 +145,7 @@ enum tp_thumb_state {
 
 struct tp_touch {
 	struct tp_dispatch *tp;
+	unsigned int index;
 	enum touch_state state;
 	bool has_ended;				/* TRACKING_ID == -1 */
 	bool dirty;
@@ -234,6 +236,14 @@ struct tp_touch {
 	} speed;
 };
 
+enum suspend_trigger {
+	SUSPEND_NO_FLAG         = 0x0,
+	SUSPEND_EXTERNAL_MOUSE  = 0x1,
+	SUSPEND_SENDEVENTS      = 0x2,
+	SUSPEND_LID             = 0x4,
+	SUSPEND_TABLET_MODE     = 0x8,
+};
+
 struct tp_dispatch {
 	struct evdev_dispatch base;
 	struct evdev_device *device;
@@ -243,9 +253,13 @@ struct tp_dispatch {
 	bool has_mt;
 	bool semi_mt;
 
-	/* true if we're reading events (i.e. not suspended) but we're
-	 * ignoring them */
-	bool ignore_events;
+	uint32_t suspend_reason;
+
+	/* pen/touch arbitration */
+	struct {
+		bool in_arbitration;
+		struct libinput_timer arbitration_timer;
+	} arbitration;
 
 	unsigned int num_slots;			/* number of slots */
 	unsigned int ntouches;			/* no slots inc. fakes */
@@ -403,10 +417,7 @@ struct tp_dispatch {
 		 * physical device, so we don't care about per-keyboard
 		 * key/modifier masks.
 		 */
-		struct paired_keyboard {
-			struct evdev_device *device;
-			struct libinput_event_listener listener;
-		} paired_keyboard[3];
+		struct list paired_keyboard_list;
 
 		unsigned long key_mask[NLONGS(KEY_CNT)];
 		unsigned long mod_mask[NLONGS(KEY_CNT)];

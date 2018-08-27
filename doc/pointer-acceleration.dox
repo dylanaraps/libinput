@@ -12,7 +12,7 @@ users.
 @section ptraccel-profiles Pointer acceleration profiles
 
 The profile decides the general method of pointer acceleration.
-libinput currently supports two profiles: "adaptive" and "flat". The aptive
+libinput currently supports two profiles: "adaptive" and "flat". The adaptive
 profile is the default profile for all devices and takes the current speed
 of the device into account when deciding on acceleration. The flat profile
 is simply a constant factor applied to all device deltas, regardless of the
@@ -137,12 +137,8 @@ As of version 1.9, libinput does not parse the `POINTINGSTICK_CONST_ACCEL` prope
 
 @image html ptraccel-trackpoint.svg "Pointer acceleration curves for trackpoints"
 
-The image above shows the trackpoint acceleration profile in comparison to the
-@ref ptraccel-linear.
-
-The constant acceleration factor, usually applied in
-@ref udev_config, shapes the acceleration profile and is pre-applied before
-any user-specific acceleration adjustments.
+The image above shows the trackpoint acceleration profile for each input
+delta.
 
 @section ptraccel-profile-flat The flat pointer acceleration profile
 
@@ -154,7 +150,7 @@ and the pointer on-screen.
 @section ptraccel-tablet Pointer acceleration on tablets
 
 Pointer acceleration for relative motion on tablet devices is a flat
-acceleration, with the speed seeting slowing down or speeding up the pointer
+acceleration, with the speed setting slowing down or speeding up the pointer
 motion by a constant factor. Tablets do not allow for switchable profiles.
 
 */

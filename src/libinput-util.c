@@ -425,9 +425,7 @@ parse_palm_pressure_property(const char *prop)
 	if (!prop)
 		return 0;
 
-	if (!safe_atoi(prop, &threshold) ||
-	    threshold < 0 ||
-	    threshold > 255) /* No touchpad device has pressure > 255 */
+	if (!safe_atoi(prop, &threshold) || threshold < 0)
 		return 0;
 
         return threshold;
@@ -456,6 +454,31 @@ parse_palm_size_property(const char *prop)
 		return 0;
 
         return thr;
+}
+
+/**
+ * Helper function to parse the LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD
+ * property from udev. Property is of the form:
+ * LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD=<integer>
+ * Where the number indicates the minimum threshold to consider a touch to
+ * be a thumb.
+ *
+ * @param prop The value of the udev property (without the
+ * LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD=)
+ * @return The pressure threshold or 0 on error
+ */
+int
+parse_thumb_pressure_property(const char *prop)
+{
+	int threshold = 0;
+
+	if (!prop)
+		return 0;
+
+	if (!safe_atoi(prop, &threshold) || threshold < 0)
+		return 0;
+
+        return threshold;
 }
 
 /**
@@ -536,4 +559,48 @@ strv_from_string(const char *in, const char *separators)
 	}
 
 	return strv;
+}
+
+/**
+ * Return a newly allocated string with all elements joined by the
+ * joiner, same as Python's string.join() basically.
+ * A strv of ["one", "two", "three", NULL] with a joiner of ", " results
+ * in "one, two, three".
+ *
+ * An empty strv ([NULL]) returns NULL, same for passing NULL as either
+ * argument.
+ *
+ * @param strv Input string arrray
+ * @param joiner Joiner between the elements in the final string
+ *
+ * @return A null-terminated string joining all elements
+ */
+char *
+strv_join(char **strv, const char *joiner)
+{
+	char **s;
+	char *str;
+	size_t slen = 0;
+	size_t count = 0;
+
+	if (!strv || !joiner)
+		return NULL;
+
+	for (s = strv, count = 0; *s; s++, count++) {
+		slen += strlen(*s);
+	}
+
+	assert(slen < 1000);
+
+	slen += (count - 1) * strlen(joiner);
+
+	str = zalloc(slen + 1); /* trailing \0 */
+	for (s = strv; *s; s++) {
+		strcat(str, *s);
+		--count;
+		if (count > 0)
+			strcat(str, joiner);
+	}
+
+	return str;
 }
