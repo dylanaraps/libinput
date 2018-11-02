@@ -162,7 +162,7 @@ debounce_enable_spurious(struct fallback_dispatch *fallback)
 	fallback->debounce.spurious_enabled = true;
 	evdev_log_info(fallback->device,
 		       "Enabling spurious button debouncing, "
-		       "see %sbutton_debouncing.html for details\n",
+		       "see %sbutton-debouncing.html for details\n",
 		       HTTP_DOC_LINK);
 }
 
@@ -565,7 +565,7 @@ fallback_init_debounce(struct fallback_dispatch *dispatch)
 	struct evdev_device *device = dispatch->device;
 	char timer_name[64];
 
-	if (device->model_flags & EVDEV_MODEL_BOUNCING_KEYS) {
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_BOUNCING_KEYS)) {
 		dispatch->debounce.state = DEBOUNCE_STATE_DISABLED;
 		return;
 	}

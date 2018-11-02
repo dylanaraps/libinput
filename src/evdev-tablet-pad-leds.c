@@ -1,23 +1,24 @@
 /*
  * Copyright © 2016 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #include "config.h"
@@ -187,7 +188,12 @@ pad_group_new_basic(struct pad_dispatch *pad,
 static inline bool
 is_litest_device(struct evdev_device *device)
 {
+#if HAVE_UDEV
+	return !!udev_device_get_property_value(device->udev_device,
+						"LIBINPUT_TEST_DEVICE");
+#else
 	return false;
+#endif
 }
 
 static inline struct pad_led_group *
@@ -239,7 +245,38 @@ pad_led_get_sysfs_base_path(struct evdev_device *device,
 			    char *path_out,
 			    size_t path_out_sz)
 {
+#if HAVE_UDEV
+	struct udev_device *parent, *udev_device;
+	const char *test_path;
+	int rc;
+
+	udev_device = device->udev_device;
+
+	/* For testing purposes only allow for a base path set through a
+	 * udev rule. We still expect the normal directory hierarchy inside */
+	test_path = udev_device_get_property_value(udev_device,
+						   "LIBINPUT_TEST_TABLET_PAD_SYSFS_PATH");
+	if (test_path) {
+		rc = snprintf(path_out, path_out_sz, "%s", test_path);
+		return rc != -1;
+	}
+
+	parent = udev_device_get_parent_with_subsystem_devtype(udev_device,
+							       "input",
+							       NULL);
+	if (!parent)
+		return false;
+
+	rc = snprintf(path_out,
+		      path_out_sz,
+		      "%s/%s::wacom-",
+		      udev_device_get_syspath(parent),
+		      udev_device_get_sysname(parent));
+
+	return rc != -1;
+#else
 	return false;
+#endif
 }
 
 #if HAVE_LIBWACOM

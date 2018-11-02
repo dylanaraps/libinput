@@ -76,7 +76,7 @@ device_added(struct netlink_input *input,
 	else
 		sysname = "";
 
-	device = evdev_device_create(&seat->base, devnode, sysname);
+	device = evdev_device_create(&seat->base, NULL, devnode, sysname);
 	libinput_seat_unref(&seat->base);
 
 	if (device == EVDEV_UNHANDLED_DEVICE) {
@@ -353,6 +353,13 @@ libinput_netlink_assign_seat(struct libinput *libinput,
 			     const char *seat_id)
 {
 	struct netlink_input *input = (struct netlink_input*)libinput;
+
+	/* We cannot do this during udev_create_context because the log
+	 * handler isn't set up there but we really want to log to the right
+	 * place if the quirks run into parser errors. So we have to do it
+	 * here since we can expect the log handler to be set up by now.
+	 */
+	libinput_init_quirks(libinput);
 
 	if (libinput->interface_backend != &interface_backend) {
 		log_bug_client(libinput, "Mismatching backends.\n");

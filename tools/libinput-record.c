@@ -40,9 +40,11 @@
 #include <signal.h>
 #include <stdbool.h>
 
+#include "libinput-versionsort.h"
 #include "libinput-util.h"
 #include "libinput-version.h"
 #include "libinput-git-version.h"
+#include "shared.h"
 
 static const int FILE_VERSION_NUMBER = 1;
 
@@ -213,8 +215,6 @@ print_evdev_event(struct record_context *ctx, struct input_event *ev)
 		unsigned long time, dt;
 
 		time = us2ms(tv2us(&ev->time));
-		if (last_ms == 0)
-			last_ms = time;
 		dt = time - last_ms;
 		last_ms = time;
 
@@ -379,8 +379,8 @@ buffer_key_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, key: %d, state: %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 key,
 		 state == LIBINPUT_KEY_STATE_PRESSED ? "pressed" : "released");
@@ -414,8 +414,8 @@ buffer_motion_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, delta: [%6.2f, %6.2f], unaccel: [%6.2f, %6.2f]}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 x, y,
 		 uax, uay);
@@ -449,8 +449,8 @@ buffer_absmotion_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, point: [%6.2f, %6.2f], transformed: [%6.2f, %6.2f]}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 x, y,
 		 tx, ty);
@@ -484,8 +484,8 @@ buffer_pointer_button_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, button: %d, state: %s, seat_count: %u}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 button,
 		 state == LIBINPUT_BUTTON_STATE_PRESSED ? "pressed" : "released",
@@ -541,8 +541,8 @@ buffer_pointer_axis_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, axes: [%2.2f, %2.2f], discrete: [%d, %d], source: %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 h, v,
 		 hd, vd,
@@ -596,8 +596,8 @@ buffer_touch_event(struct record_context *ctx,
 		snprintf(event->u.libinput.msg,
 			 sizeof(event->u.libinput.msg),
 			 "{time: %ld.%06ld, type: %s}",
-			 time / (int)1e6,
-			 time % (int)1e6,
+			 (long)(time / (int)1e6),
+			 (long)(time % (int)1e6),
 			 type);
 		break;
 	case LIBINPUT_EVENT_TOUCH_DOWN:
@@ -609,8 +609,8 @@ buffer_touch_event(struct record_context *ctx,
 		snprintf(event->u.libinput.msg,
 			 sizeof(event->u.libinput.msg),
 			 "{time: %ld.%06ld, type: %s, slot: %d, seat_slot: %d, point: [%6.2f, %6.2f], transformed: [%6.2f, %6.2f]}",
-			 time / (int)1e6,
-			 time % (int)1e6,
+			 (long)(time / (int)1e6),
+			 (long)(time % (int)1e6),
 			 type,
 			 slot,
 			 seat_slot,
@@ -622,8 +622,8 @@ buffer_touch_event(struct record_context *ctx,
 		snprintf(event->u.libinput.msg,
 			 sizeof(event->u.libinput.msg),
 			 "{time: %ld.%06ld, type: %s, slot: %d, seat_slot: %d}",
-			 time / (int)1e6,
-			 time % (int)1e6,
+			 (long)(time / (int)1e6),
+			 (long)(time % (int)1e6),
 			 type,
 			 slot,
 			 seat_slot);
@@ -679,8 +679,8 @@ buffer_gesture_event(struct record_context *ctx,
 			 "{time: %ld.%06ld, type: %s, nfingers: %d, "
 			 "delta: [%6.2f, %6.2f], unaccel: [%6.2f, %6.2f], "
 			 "angle_delta: %6.2f, scale: %6.2f}",
-			 time / (int)1e6,
-			 time % (int)1e6,
+			 (long)(time / (int)1e6),
+			 (long)(time % (int)1e6),
 			 type,
 			 libinput_event_gesture_get_finger_count(g),
 			 libinput_event_gesture_get_dx(g),
@@ -698,8 +698,8 @@ buffer_gesture_event(struct record_context *ctx,
 			 sizeof(event->u.libinput.msg),
 			 "{time: %ld.%06ld, type: %s, nfingers: %d, "
 			 "delta: [%6.2f, %6.2f], unaccel: [%6.2f, %6.2f]}",
-			 time / (int)1e6,
-			 time % (int)1e6,
+			 (long)(time / (int)1e6),
+			 (long)(time % (int)1e6),
 			 type,
 			 libinput_event_gesture_get_finger_count(g),
 			 libinput_event_gesture_get_dx(g),
@@ -716,6 +716,7 @@ buffer_gesture_event(struct record_context *ctx,
 static char *
 buffer_tablet_axes(struct libinput_event_tablet_tool *t)
 {
+	const int MAX_AXES = 10;
 	struct libinput_tablet_tool *tool;
 	char *s = NULL;
 	int idx = 0;
@@ -725,7 +726,7 @@ buffer_tablet_axes(struct libinput_event_tablet_tool *t)
 
 	tool = libinput_event_tablet_tool_get_tool(t);
 
-	strv = zalloc(10 * sizeof *strv);
+	strv = zalloc(MAX_AXES * sizeof *strv);
 
 	x = libinput_event_tablet_tool_get_x(t);
 	y = libinput_event_tablet_tool_get_y(t);
@@ -788,6 +789,8 @@ buffer_tablet_axes(struct libinput_event_tablet_tool *t)
 		if (len <= 0)
 			goto out;
 	}
+
+	assert(idx < MAX_AXES);
 
 	s = strv_join(strv, ", ");
 out:
@@ -872,8 +875,8 @@ buffer_tablet_tool_proximity_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, proximity: %s, tool-type: %s, serial: %" PRIu64 ", axes: %s, %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 prox ? "in" : "out",
 		 tool_type,
@@ -914,8 +917,8 @@ buffer_tablet_tool_button_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, button: %d, state: %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 button,
 		 state ? "pressed" : "released");
@@ -971,8 +974,8 @@ buffer_tablet_tool_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s%s, tip: %s, %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 btn_buffer, /* may be empty string */
 		 tip ? "down" : "up",
@@ -1013,8 +1016,8 @@ buffer_tablet_pad_button_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, button: %d, state: %s, mode: %d, is-toggle: %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 button,
 		 state == LIBINPUT_BUTTON_STATE_PRESSED ? "pressed" : "released",
@@ -1080,8 +1083,8 @@ buffer_tablet_pad_ringstrip_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, number: %d, position: %.2f, source: %s, mode: %d}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 number,
 		 pos,
@@ -1118,8 +1121,8 @@ buffer_switch_event(struct record_context *ctx,
 	snprintf(event->u.libinput.msg,
 		 sizeof(event->u.libinput.msg),
 		 "{time: %ld.%06ld, type: %s, switch: %d, state: %s}",
-		 time / (int)1e6,
-		 time % (int)1e6,
+		 (long)(time / (int)1e6),
+		 (long)(time % (int)1e6),
 		 type,
 		 sw,
 		 state == LIBINPUT_SWITCH_STATE_ON ? "on" : "off");
@@ -1661,6 +1664,66 @@ out:
 	udev_unref(udev);
 }
 
+static void
+quirks_log_handler(struct libinput *this_is_null,
+		   enum libinput_log_priority priority,
+		   const char *format,
+		   va_list args)
+{
+}
+
+static void
+list_print(void *userdata, const char *val)
+{
+	struct record_context *ctx = userdata;
+
+	iprintf(ctx, "- %s\n", val);
+}
+
+static inline void
+print_device_quirks(struct record_context *ctx, struct record_device *dev)
+{
+	struct udev *udev = NULL;
+	struct udev_device *udev_device = NULL;
+	struct stat st;
+	struct quirks_context *quirks;
+	const char *data_path = LIBINPUT_QUIRKS_DIR;
+	const char *override_file = LIBINPUT_QUIRKS_OVERRIDE_FILE;
+
+	if (stat(dev->devnode, &st) < 0)
+		return;
+
+	quirks = quirks_init_subsystem(data_path,
+				       override_file,
+				       quirks_log_handler,
+				       NULL,
+				       QLOG_CUSTOM_LOG_PRIORITIES);
+	if (!quirks) {
+		fprintf(stderr,
+			"Failed to initialize the device quirks. "
+			"Please see the above errors "
+			"and/or re-run with --verbose for more details\n");
+		return;
+	}
+
+	udev = udev_new();
+	if (!udev)
+		goto out;
+
+	udev_device = udev_device_new_from_devnum(udev, 'c', st.st_rdev);
+	if (!udev_device)
+		goto out;
+
+	iprintf(ctx, "quirks:\n");
+	indent_push(ctx);
+
+	tools_list_device_quirks(quirks, udev_device, list_print, ctx);
+
+	indent_pop(ctx);
+out:
+	udev_device_unref(udev_device);
+	udev_unref(udev);
+}
 static inline void
 print_libinput_description(struct record_context *ctx,
 			   struct record_device *dev)
@@ -1716,6 +1779,7 @@ print_device_description(struct record_context *ctx, struct record_device *dev)
 
 	print_evdev_description(ctx, dev);
 	print_udev_properties(ctx, dev);
+	print_device_quirks(ctx, dev);
 	print_libinput_description(ctx, dev);
 }
 

@@ -28,14 +28,19 @@
 #include "config.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <locale.h>
+#ifdef HAVE_XLOCALE_H
+#include <xlocale.h>
+#endif
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -55,7 +60,6 @@
 
 /* The HW DPI rate we normalize to before calculating pointer acceleration */
 #define DEFAULT_MOUSE_DPI 1000
-#define DEFAULT_TRACKPOINT_RANGE 20
 #define DEFAULT_TRACKPOINT_SENSITIVITY 128
 
 #define ANSI_HIGHLIGHT		"\x1B[0;1;39m"
@@ -87,6 +91,7 @@ struct list {
 
 void list_init(struct list *list);
 void list_insert(struct list *list, struct list *elm);
+void list_append(struct list *list, struct list *elm);
 void list_remove(struct list *elm);
 bool list_empty(const struct list *list);
 
@@ -141,6 +146,11 @@ static inline void *
 zalloc(size_t size)
 {
 	void *p;
+
+	/* We never need to alloc anything more than 1,5 MB so we can assume
+	 * if we ever get above that something's going wrong */
+	if (size > 1536 * 1024)
+		assert(!"bug: internal malloc size limit exceeded");
 
 	p = calloc(1, size);
 	if (!p)
@@ -199,19 +209,19 @@ msleep(unsigned int ms)
 static inline bool
 long_bit_is_set(const unsigned long *array, int bit)
 {
-	return !!(array[bit / LONG_BITS] & (1LL << (bit % LONG_BITS)));
+	return !!(array[bit / LONG_BITS] & (1ULL << (bit % LONG_BITS)));
 }
 
 static inline void
 long_set_bit(unsigned long *array, int bit)
 {
-	array[bit / LONG_BITS] |= (1LL << (bit % LONG_BITS));
+	array[bit / LONG_BITS] |= (1ULL << (bit % LONG_BITS));
 }
 
 static inline void
 long_clear_bit(unsigned long *array, int bit)
 {
-	array[bit / LONG_BITS] &= ~(1LL << (bit % LONG_BITS));
+	array[bit / LONG_BITS] &= ~(1ULL << (bit % LONG_BITS));
 }
 
 static inline void
@@ -414,13 +424,9 @@ enum ratelimit_state ratelimit_test(struct ratelimit *r);
 int parse_mouse_dpi_property(const char *prop);
 int parse_mouse_wheel_click_angle_property(const char *prop);
 int parse_mouse_wheel_click_count_property(const char *prop);
-double parse_trackpoint_accel_property(const char *prop);
 bool parse_dimension_property(const char *prop, size_t *width, size_t *height);
 bool parse_calibration_property(const char *prop, float calibration[6]);
 bool parse_range_property(const char *prop, int *hi, int *lo);
-int parse_palm_pressure_property(const char *prop);
-int parse_palm_size_property(const char *prop);
-int parse_thumb_pressure_property(const char *prop);
 
 enum tpkbcombo_layout {
 	TPKBCOMBO_LAYOUT_UNKNOWN,
@@ -517,11 +523,59 @@ safe_atoi(const char *str, int *val)
 }
 
 static inline bool
+safe_atou_base(const char *str, unsigned int *val, int base)
+{
+	char *endptr;
+	unsigned long v;
+
+	assert(base == 10 || base == 16 || base == 8);
+
+	errno = 0;
+	v = strtoul(str, &endptr, base);
+	if (errno > 0)
+		return false;
+	if (str == endptr)
+		return false;
+	if (*str != '\0' && *endptr != '\0')
+		return false;
+
+	if ((long)v < 0)
+		return false;
+
+	*val = v;
+	return true;
+}
+
+static inline bool
+safe_atou(const char *str, unsigned int *val)
+{
+	return safe_atou_base(str, val, 10);
+}
+
+static inline bool
 safe_atod(const char *str, double *val)
 {
 	char *endptr;
 	double v;
 	locale_t c_locale;
+	size_t slen = strlen(str);
+
+	/* We don't have a use-case where we want to accept hex for a double
+	 * or any of the other values strtod can parse */
+	for (size_t i = 0; i < slen; i++) {
+		char c = str[i];
+
+		if (isdigit(c))
+		       continue;
+		switch(c) {
+		case '+':
+		case '-':
+		case '.':
+			break;
+		default:
+			return false;
+		}
+	}
 
 	/* Create a "C" locale to force strtod to use '.' as separator */
 	c_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
@@ -537,7 +591,7 @@ safe_atod(const char *str, double *val)
 		return false;
 	if (*str != '\0' && *endptr != '\0')
 		return false;
-	if (isnan(v) || isinf(v))
+	if (v != 0.0 && !isnormal(v))
 		return false;
 
 	*val = v;

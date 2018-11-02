@@ -19,7 +19,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include "config.h"
@@ -186,7 +185,6 @@ tp_tap_idle_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_PALM:
 		tp->tap.state = TAP_STATE_IDLE;
-		t->tap.state = TAP_TOUCH_STATE_DEAD;
 		break;
 	case TAP_EVENT_PALM_UP:
 		break;
@@ -239,7 +237,6 @@ tp_tap_touch_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_PALM:
 		tp->tap.state = TAP_STATE_IDLE;
-		t->tap.state = TAP_TOUCH_STATE_DEAD;
 		tp_tap_clear_timer(tp);
 		break;
 	case TAP_EVENT_PALM_UP:
@@ -793,7 +790,7 @@ tp_tap_multitap_palm_handle_event(struct tp_dispatch *tp,
 {
 	switch (event) {
 	case TAP_EVENT_RELEASE:
-		/* This is the palm finger */
+		log_tap_bug(tp, t, event);
 		break;
 	case TAP_EVENT_TOUCH:
 		tp->tap.state = TAP_STATE_MULTITAP_DOWN;

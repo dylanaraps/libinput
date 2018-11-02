@@ -43,6 +43,7 @@
 #include "evdev.h"
 #include "filter.h"
 #include "libinput-private.h"
+#include "quirks.h"
 
 #if HAVE_LIBWACOM
 #include <libwacom/libwacom.h>
@@ -72,6 +73,49 @@ struct evdev_udev_tag_match {
 	const char *name;
 	enum evdev_device_udev_tags tag;
 };
+
+#if HAVE_UDEV
+static const struct evdev_udev_tag_match evdev_udev_tag_matches[] = {
+	{"ID_INPUT",			EVDEV_UDEV_TAG_INPUT},
+	{"ID_INPUT_KEYBOARD",		EVDEV_UDEV_TAG_KEYBOARD},
+	{"ID_INPUT_KEY",		EVDEV_UDEV_TAG_KEYBOARD},
+	{"ID_INPUT_MOUSE",		EVDEV_UDEV_TAG_MOUSE},
+	{"ID_INPUT_TOUCHPAD",		EVDEV_UDEV_TAG_TOUCHPAD},
+	{"ID_INPUT_TOUCHSCREEN",	EVDEV_UDEV_TAG_TOUCHSCREEN},
+	{"ID_INPUT_TABLET",		EVDEV_UDEV_TAG_TABLET},
+	{"ID_INPUT_TABLET_PAD",		EVDEV_UDEV_TAG_TABLET_PAD},
+	{"ID_INPUT_JOYSTICK",		EVDEV_UDEV_TAG_JOYSTICK},
+	{"ID_INPUT_ACCELEROMETER",	EVDEV_UDEV_TAG_ACCELEROMETER},
+	{"ID_INPUT_POINTINGSTICK",	EVDEV_UDEV_TAG_POINTINGSTICK},
+	{"ID_INPUT_TRACKBALL",		EVDEV_UDEV_TAG_TRACKBALL},
+	{"ID_INPUT_SWITCH",		EVDEV_UDEV_TAG_SWITCH},
+};
+#endif
+
+static inline bool
+parse_udev_flag(struct evdev_device *device,
+		struct udev_device *udev_device,
+		const char *property)
+{
+	const char *val;
+
+#if HAVE_UDEV
+	val = udev_device_get_property_value(udev_device, property);
+#else
+	val = NULL;
+#endif
+	if (!val)
+		return false;
+
+	if (streq(val, "1"))
+		return true;
+	if (!streq(val, "0"))
+		evdev_log_error(device,
+				"property %s has invalid value '%s'\n",
+				property,
+				val);
+	return false;
+}
 
 int
 evdev_update_key_down_count(struct evdev_device *device,
@@ -337,7 +381,8 @@ evdev_notify_axis(struct evdev_device *device,
 }
 
 static void
-evdev_tag_external_mouse(struct evdev_device *device)
+evdev_tag_external_mouse(struct evdev_device *device,
+			 struct udev_device *udev_device)
 {
 	int bustype;
 
@@ -347,10 +392,12 @@ evdev_tag_external_mouse(struct evdev_device *device)
 }
 
 static void
-evdev_tag_trackpoint(struct evdev_device *device)
+evdev_tag_trackpoint(struct evdev_device *device,
+		     struct udev_device *udev_device)
 {
 	if (libevdev_has_property(device->evdev,
-				  INPUT_PROP_POINTING_STICK))
+				  INPUT_PROP_POINTING_STICK) ||
+	    parse_udev_flag(device, udev_device, "ID_INPUT_POINTINGSTICK"))
 		device->tags |= EVDEV_TAG_TRACKPOINT;
 }
 
@@ -369,9 +416,12 @@ evdev_tag_keyboard_external(struct evdev_device *device)
 }
 
 static void
-evdev_tag_keyboard(struct evdev_device *device)
+evdev_tag_keyboard(struct evdev_device *device,
+		   struct udev_device *udev_device)
 {
-	const char *prop;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	char *prop;
 	int code;
 
 	if (!libevdev_has_event_type(device->evdev, EV_KEY))
@@ -384,9 +434,9 @@ evdev_tag_keyboard(struct evdev_device *device)
 			return;
 	}
 
-	/* This should eventually become ID_INPUT_KEYBOARD_INTEGRATION */
-	prop = NULL;
-	if (prop) {
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (q && quirks_get_string(q, QUIRK_ATTR_KEYBOARD_INTEGRATION, &prop)) {
 		if (streq(prop, "internal")) {
 			evdev_tag_keyboard_internal(device);
 		} else if (streq(prop, "external")) {
@@ -397,6 +447,8 @@ evdev_tag_keyboard(struct evdev_device *device)
 				       prop);
 		}
 	}
+
+	quirks_unref(q);
 
 	device->tags |= EVDEV_TAG_KEYBOARD;
 }
@@ -756,11 +808,16 @@ evdev_is_fake_mt_device(struct evdev_device *device)
 enum switch_reliability
 evdev_read_switch_reliability_prop(struct evdev_device *device)
 {
-	const char *prop;
 	enum switch_reliability r;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	char *prop;
 
-	prop = NULL;
-	if (!parse_switch_reliability_property(prop, &r)) {
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q || !quirks_get_string(q, QUIRK_ATTR_LID_SWITCH_RELIABILITY, &prop)) {
+		r = RELIABILITY_UNKNOWN;
+	} else if (!parse_switch_reliability_property(prop, &r)) {
 		evdev_log_error(device,
 				"%s: switch reliability set to unknown value '%s'\n",
 				device->devname,
@@ -769,6 +826,8 @@ evdev_read_switch_reliability_prop(struct evdev_device *device)
 	} else if (r == RELIABILITY_WRITE_OPEN) {
 		evdev_log_info(device, "will write switch open events\n");
 	}
+
+	quirks_unref(q);
 
 	return r;
 }
@@ -905,11 +964,14 @@ evdev_init_accel(struct evdev_device *device,
 	if (which == LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT)
 		filter = create_pointer_accelerator_filter_flat(device->dpi);
 	else if (device->tags & EVDEV_TAG_TRACKPOINT)
-		filter = create_pointer_accelerator_filter_trackpoint(device->trackpoint_range);
+		filter = create_pointer_accelerator_filter_trackpoint(device->trackpoint_multiplier,
+								      device->use_velocity_averaging);
 	else if (device->dpi < DEFAULT_MOUSE_DPI)
-		filter = create_pointer_accelerator_filter_linear_low_dpi(device->dpi);
+		filter = create_pointer_accelerator_filter_linear_low_dpi(device->dpi,
+									  device->use_velocity_averaging);
 	else
-		filter = create_pointer_accelerator_filter_linear(device->dpi);
+		filter = create_pointer_accelerator_filter_linear(device->dpi,
+								  device->use_velocity_averaging);
 
 	if (!filter)
 		return false;
@@ -1042,7 +1104,11 @@ evdev_read_wheel_click_prop(struct evdev_device *device,
 	int val;
 
 	*angle = DEFAULT_WHEEL_CLICK_ANGLE;
+#if HAVE_UDEV
+	prop = udev_device_get_property_value(device->udev_device, prop);
+#else
 	prop = NULL;
+#endif
 	if (!prop)
 		return false;
 
@@ -1067,7 +1133,11 @@ evdev_read_wheel_click_count_prop(struct evdev_device *device,
 {
 	int val;
 
+#if HAVE_UDEV
+	prop = udev_device_get_property_value(device->udev_device, prop);
+#else
 	prop = NULL;
+#endif
 	if (!prop)
 		return false;
 
@@ -1115,65 +1185,69 @@ evdev_read_wheel_tilt_props(struct evdev_device *device)
 {
 	struct wheel_tilt_flags flags;
 
-	flags.vertical = false;
-	flags.horizontal = false;
+	flags.vertical = parse_udev_flag(device,
+					 device->udev_device,
+					 "MOUSE_WHEEL_TILT_VERTICAL");
+
+	flags.horizontal = parse_udev_flag(device,
+					 device->udev_device,
+					 "MOUSE_WHEEL_TILT_HORIZONTAL");
 	return flags;
 }
 
-static inline int
-evdev_get_trackpoint_range(struct evdev_device *device)
+static inline double
+evdev_get_trackpoint_multiplier(struct evdev_device *device)
 {
-	const char *prop;
-	int range = DEFAULT_TRACKPOINT_RANGE;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	double multiplier = 1.0;
 
 	if (!(device->tags & EVDEV_TAG_TRACKPOINT))
-		return DEFAULT_TRACKPOINT_RANGE;
+		return 1.0;
 
-	prop = NULL;
-	if (prop) {
-		if (!safe_atoi(prop, &range) || range < 0.0) {
-			evdev_log_error(device,
-					"trackpoint range property is present but invalid, "
-					"using %d instead\n",
-					DEFAULT_TRACKPOINT_RANGE);
-			range = DEFAULT_TRACKPOINT_RANGE;
-		}
-		goto out;
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (q) {
+		quirks_get_double(q, QUIRK_ATTR_TRACKPOINT_MULTIPLIER, &multiplier);
+		quirks_unref(q);
 	}
 
-	evdev_log_info(device,
-		       "trackpoint does not have a specified range, "
-		       "guessing... see %strackpoints.html\n",
-		       HTTP_DOC_LINK);
-
-	prop = NULL;
-	if (prop) {
-		int sensitivity;
-
-		if (!safe_atoi(prop, &sensitivity) ||
-		    (sensitivity < 0.0 || sensitivity > 255)) {
-			evdev_log_error(device,
-					"trackpoint sensitivity property is present but invalid, "
-					"using %d instead\n",
-					DEFAULT_TRACKPOINT_SENSITIVITY);
-			sensitivity = DEFAULT_TRACKPOINT_SENSITIVITY;
-		}
-		range = 1.0 * DEFAULT_TRACKPOINT_RANGE *
-			sensitivity/DEFAULT_TRACKPOINT_SENSITIVITY;
-
-		evdev_log_debug(device,
-				"trackpoint udev sensitivity is %d\n",
-				sensitivity);
+	if (multiplier <= 0.0) {
+		evdev_log_bug_libinput(device,
+				       "trackpoint multiplier %.2f is invalid\n",
+				       multiplier);
+		multiplier = 1.0;
 	}
 
-out:
-	if (range == 0) {
-		evdev_log_bug_libinput(device, "trackpoint range is zero\n");
-		range = DEFAULT_TRACKPOINT_RANGE;
+	if (multiplier != 1.0)
+		evdev_log_info(device,
+			       "trackpoint multiplier is %.2f\n",
+			       multiplier);
+
+	return multiplier;
+}
+
+static inline bool
+evdev_need_velocity_averaging(struct evdev_device *device)
+{
+	struct quirks_context *quirks;
+	struct quirks *q;
+	bool use_velocity_averaging = false; /* default off unless we have quirk */
+
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (q) {
+		quirks_get_bool(q,
+				QUIRK_ATTR_USE_VELOCITY_AVERAGING,
+				&use_velocity_averaging);
+		quirks_unref(q);
 	}
 
-	evdev_log_info(device, "trackpoint device set to range %d\n", range);
-	return range;
+	if (use_velocity_averaging)
+		evdev_log_info(device,
+			       "velocity averaging is turned on\n");
+
+	return use_velocity_averaging;
 }
 
 static inline int
@@ -1185,7 +1259,12 @@ evdev_read_dpi_prop(struct evdev_device *device)
 	if (device->tags & EVDEV_TAG_TRACKPOINT)
 		return DEFAULT_MOUSE_DPI;
 
+#if HAVE_UDEV
+	mouse_dpi = udev_device_get_property_value(device->udev_device,
+						   "MOUSE_DPI");
+#else
 	mouse_dpi = NULL;
+#endif
 	if (mouse_dpi) {
 		dpi = parse_mouse_dpi_property(mouse_dpi);
 		if (!dpi) {
@@ -1206,7 +1285,81 @@ evdev_read_dpi_prop(struct evdev_device *device)
 static inline uint32_t
 evdev_read_model_flags(struct evdev_device *device)
 {
-	return 0;
+	const struct model_map {
+		enum quirk quirk;
+		enum evdev_device_model model;
+	} model_map[] = {
+#define MODEL(name) { QUIRK_MODEL_##name, EVDEV_MODEL_##name }
+		MODEL(WACOM_TOUCHPAD),
+		MODEL(SYNAPTICS_SERIAL_TOUCHPAD),
+		MODEL(LENOVO_T450_TOUCHPAD),
+		MODEL(TRACKBALL),
+		MODEL(APPLE_TOUCHPAD_ONEBUTTON),
+		MODEL(LENOVO_SCROLLPOINT),
+#undef MODEL
+		{ 0, 0 },
+	};
+	const struct model_map *m = model_map;
+	uint32_t model_flags = 0;
+	uint32_t all_model_flags = 0;
+	struct quirks_context *quirks;
+	struct quirks *q;
+
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+
+	while (q && m->quirk) {
+		bool is_set;
+
+		/* Check for flag re-use */
+		assert((all_model_flags & m->model) == 0);
+		all_model_flags |= m->model;
+
+		if (quirks_get_bool(q, m->quirk, &is_set)) {
+			if (is_set) {
+				evdev_log_debug(device,
+						"tagged as %s\n",
+						quirk_get_name(m->quirk));
+				model_flags |= m->model;
+			} else {
+				evdev_log_debug(device,
+						"untagged as %s\n",
+						quirk_get_name(m->quirk));
+				model_flags &= ~m->model;
+			}
+		}
+
+		m++;
+	}
+
+	quirks_unref(q);
+
+	if (parse_udev_flag(device,
+			    device->udev_device,
+			    "ID_INPUT_TRACKBALL")) {
+		evdev_log_debug(device, "tagged as trackball\n");
+		model_flags |= EVDEV_MODEL_TRACKBALL;
+	}
+
+	/**
+	 * Device is 6 years old at the time of writing this and this was
+	 * one of the few udev properties that wasn't reserved for private
+	 * usage, so we need to keep this for backwards compat.
+	 */
+	if (parse_udev_flag(device,
+			    device->udev_device,
+			    "LIBINPUT_MODEL_LENOVO_X220_TOUCHPAD_FW81")) {
+		evdev_log_debug(device, "tagged as trackball\n");
+		model_flags |= EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81;
+	}
+
+	if (parse_udev_flag(device, device->udev_device,
+			    "LIBINPUT_TEST_DEVICE")) {
+		evdev_log_debug(device, "is a test device\n");
+		model_flags |= EVDEV_MODEL_TEST_DEVICE;
+	}
+
+	return model_flags;
 }
 
 static inline bool
@@ -1214,13 +1367,25 @@ evdev_read_attr_res_prop(struct evdev_device *device,
 			 size_t *xres,
 			 size_t *yres)
 {
-	const char *res_prop;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	struct quirk_dimensions dim;
+	bool rc = false;
 
-	res_prop = NULL;
-	if (!res_prop)
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q)
 		return false;
 
-	return parse_dimension_property(res_prop, xres, yres);
+	rc = quirks_get_dimensions(q, QUIRK_ATTR_RESOLUTION_HINT, &dim);
+	if (rc) {
+		*xres = dim.x;
+		*yres = dim.y;
+	}
+
+	quirks_unref(q);
+
+	return rc;
 }
 
 static inline bool
@@ -1228,13 +1393,25 @@ evdev_read_attr_size_prop(struct evdev_device *device,
 			  size_t *size_x,
 			  size_t *size_y)
 {
-	const char *size_prop;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	struct quirk_dimensions dim;
+	bool rc = false;
 
-	size_prop = NULL;
-	if (!size_prop)
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q)
 		return false;
 
-	return parse_dimension_property(size_prop, size_x, size_y);
+	rc = quirks_get_dimensions(q, QUIRK_ATTR_SIZE_HINT, &dim);
+	if (rc) {
+		*size_x = dim.x;
+		*size_y = dim.y;
+	}
+
+	quirks_unref(q);
+
+	return rc;
 }
 
 /* Return 1 if the device is set to the fake resolution or 0 otherwise */
@@ -1284,12 +1461,26 @@ evdev_fix_abs_resolution(struct evdev_device *device,
 }
 
 static enum evdev_device_udev_tags
-evdev_device_get_udev_tags(struct evdev_device *device)
+evdev_device_get_udev_tags(struct evdev_device *device,
+			   struct udev_device *udev_device)
 {
-	struct libevdev *evdev = device->evdev;
 	enum evdev_device_udev_tags tags = 0;
-	struct stat st;
 
+#if HAVE_UDEV
+	for (int i = 0; i < 2 && udev_device; i++) {
+		unsigned j;
+		for (j = 0; j < ARRAY_LENGTH(evdev_udev_tag_matches); j++) {
+			const struct evdev_udev_tag_match match = evdev_udev_tag_matches[j];
+			if (parse_udev_flag(device,
+					    udev_device,
+					    match.name))
+				tags |= match.tag;
+		}
+		udev_device = udev_device_get_parent(udev_device);
+	}
+#else
+	struct libevdev *evdev = device->evdev;
+	struct stat st;
 	if (fstat(device->fd, &st) < 0)
 		return 0;
 	if (major(st.st_rdev) == INPUT_MAJOR)
@@ -1309,6 +1500,7 @@ evdev_device_get_udev_tags(struct evdev_device *device)
 			tags |= EVDEV_UDEV_TAG_MOUSE;
 		}
 	}
+#endif
 
 	return tags;
 }
@@ -1497,7 +1689,7 @@ evdev_configure_device(struct evdev_device *device)
 	unsigned int tablet_tags;
 	struct evdev_dispatch *dispatch;
 
-	udev_tags = evdev_device_get_udev_tags(device);
+	udev_tags = evdev_device_get_udev_tags(device, device->udev_device);
 
 	if ((udev_tags & EVDEV_UDEV_TAG_INPUT) == 0 ||
 	    (udev_tags & ~EVDEV_UDEV_TAG_INPUT) == 0) {
@@ -1577,6 +1769,8 @@ evdev_configure_device(struct evdev_device *device)
 	if (udev_tags & EVDEV_UDEV_TAG_TOUCHPAD) {
 		if (udev_tags & EVDEV_UDEV_TAG_TABLET)
 			evdev_tag_tablet_touchpad(device);
+		/* whether velocity should be averaged, false by default */
+		device->use_velocity_averaging = evdev_need_velocity_averaging(device);
 		dispatch = evdev_mt_touchpad_create(device);
 		evdev_log_info(device, "device is a touchpad\n");
 		return dispatch;
@@ -1584,10 +1778,12 @@ evdev_configure_device(struct evdev_device *device)
 
 	if (udev_tags & EVDEV_UDEV_TAG_MOUSE ||
 	    udev_tags & EVDEV_UDEV_TAG_POINTINGSTICK) {
-		evdev_tag_external_mouse(device);
-		evdev_tag_trackpoint(device);
+		evdev_tag_external_mouse(device, device->udev_device);
+		evdev_tag_trackpoint(device, device->udev_device);
 		device->dpi = evdev_read_dpi_prop(device);
-		device->trackpoint_range = evdev_get_trackpoint_range(device);
+		device->trackpoint_multiplier = evdev_get_trackpoint_multiplier(device);
+		/* whether velocity should be averaged, false by default */
+		device->use_velocity_averaging = evdev_need_velocity_averaging(device);
 
 		device->seat_caps |= EVDEV_DEVICE_POINTER;
 
@@ -1614,7 +1810,7 @@ evdev_configure_device(struct evdev_device *device)
 			device->seat_caps |= EVDEV_DEVICE_POINTER;
 		}
 
-		evdev_tag_keyboard(device);
+		evdev_tag_keyboard(device, device->udev_device);
 	}
 
 	if (udev_tags & EVDEV_UDEV_TAG_TOUCHSCREEN) {
@@ -1680,13 +1876,46 @@ evdev_notify_added_device(struct evdev_device *device)
 }
 
 static bool
-evdev_set_device_group(struct evdev_device *device)
+evdev_device_have_same_syspath(struct udev_device *udev_device, int fd)
+{
+#if HAVE_UDEV
+	struct udev *udev = udev_device_get_udev(udev_device);
+	struct udev_device *udev_device_new = NULL;
+	struct stat st;
+	bool rc = false;
+
+	if (fstat(fd, &st) < 0)
+		goto out;
+
+	udev_device_new = udev_device_new_from_devnum(udev, 'c', st.st_rdev);
+	if (!udev_device_new)
+		goto out;
+
+	rc = streq(udev_device_get_syspath(udev_device_new),
+		   udev_device_get_syspath(udev_device));
+out:
+	if (udev_device_new)
+		udev_device_unref(udev_device_new);
+	return rc;
+#else
+	return true;
+#endif
+}
+
+static bool
+evdev_set_device_group(struct evdev_device *device,
+		       struct udev_device *udev_device)
 {
 	struct libinput *libinput = evdev_libinput_context(device);
 	struct libinput_device_group *group = NULL;
 	const char *udev_group;
 
+#if HAVE_UDEV
+	udev_group = udev_device_get_property_value(udev_device,
+						    "LIBINPUT_DEVICE_GROUP");
+#else
 	udev_group = NULL;
+#endif
 	if (udev_group)
 		group = libinput_device_group_find_group(libinput, udev_group);
 
@@ -1717,6 +1946,10 @@ evdev_drain_fd(int fd)
 static inline void
 evdev_pre_configure_model_quirks(struct evdev_device *device)
 {
+	struct quirks_context *quirks;
+	struct quirks *q;
+	char *prop;
+
 	/* The Cyborg RAT has a mode button that cycles through event codes.
 	 * On press, we get a release for the current mode and a press for the
 	 * next mode:
@@ -1740,7 +1973,7 @@ evdev_pre_configure_model_quirks(struct evdev_device *device)
 	 *
 	 * Disable the event codes to avoid stuck buttons.
 	 */
-	if (device->model_flags & EVDEV_MODEL_CYBORG_RAT) {
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_CYBORG_RAT)) {
 		libevdev_disable_event_code(device->evdev, EV_KEY, 0x118);
 		libevdev_disable_event_code(device->evdev, EV_KEY, 0x119);
 		libevdev_disable_event_code(device->evdev, EV_KEY, 0x11a);
@@ -1749,49 +1982,76 @@ evdev_pre_configure_model_quirks(struct evdev_device *device)
 	 * emulates a full 2/3 button mouse for us. Ignore anything from the
 	 * ABS interface
 	 */
-	if (device->model_flags & EVDEV_MODEL_APPLE_MAGICMOUSE)
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_APPLE_MAGICMOUSE))
 		libevdev_disable_event_type(device->evdev, EV_ABS);
 
 	/* Claims to have double/tripletap but doesn't actually send it
 	 * https://bugzilla.redhat.com/show_bug.cgi?id=1351285 and
 	 * https://bugs.freedesktop.org/show_bug.cgi?id=98538
 	 */
-	if (device->model_flags &
-	    (EVDEV_MODEL_HP8510_TOUCHPAD|EVDEV_MODEL_HP6910_TOUCHPAD)) {
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_HP8510_TOUCHPAD) ||
+	    evdev_device_has_model_quirk(device, QUIRK_MODEL_HP6910_TOUCHPAD)) {
 		libevdev_disable_event_code(device->evdev, EV_KEY, BTN_TOOL_DOUBLETAP);
 		libevdev_disable_event_code(device->evdev, EV_KEY, BTN_TOOL_TRIPLETAP);
 	}
 
 	/* Touchpad is a clickpad but INPUT_PROP_BUTTONPAD is not set, see
 	 * fdo bug 97147. Remove when RMI4 is commonplace */
-	if (device->model_flags & EVDEV_MODEL_HP_STREAM11_TOUCHPAD)
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_HP_STREAM11_TOUCHPAD))
 		libevdev_enable_property(device->evdev,
 					 INPUT_PROP_BUTTONPAD);
 
 	/* Touchpad claims to have 4 slots but only ever sends 2
 	 * https://bugs.freedesktop.org/show_bug.cgi?id=98100 */
-	if (device->model_flags & EVDEV_MODEL_HP_ZBOOK_STUDIO_G3)
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_HP_ZBOOK_STUDIO_G3))
 		libevdev_set_abs_maximum(device->evdev, ABS_MT_SLOT, 1);
 
-	/* Logitech Marble Mouse claims to have a middle button */
-	if (device->model_flags & EVDEV_MODEL_LOGITECH_MARBLE_MOUSE)
+	/* Logitech Marble Mouse claims to have a middle button, same for
+	 * the Kensington Orbit */
+	if (evdev_device_has_model_quirk(device,
+					 QUIRK_MODEL_LOGITECH_MARBLE_MOUSE) ||
+	    evdev_device_has_model_quirk(device,
+					 QUIRK_MODEL_KENSINGTON_ORBIT))
 		libevdev_disable_event_code(device->evdev, EV_KEY, BTN_MIDDLE);
 
 	/* Aiptek tablets have tilt but don't send events */
-	if (device->model_flags & EVDEV_MODEL_TABLET_NO_TILT) {
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_TABLET_NO_TILT)) {
 		libevdev_disable_event_code(device->evdev, EV_ABS, ABS_TILT_X);
 		libevdev_disable_event_code(device->evdev, EV_ABS, ABS_TILT_Y);
 	}
 
 	/* Lenovo Carbon X1 6th gen sends bogus ABS_MT_TOOL_TYPE events for
 	 * MT_TOOL_PALM */
-	if (device->model_flags & EVDEV_MODEL_LENOVO_CARBON_X1_6TH)
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_CARBON_X1_6TH))
 		libevdev_disable_event_code(device->evdev,
 					    EV_ABS,
 					    ABS_MT_TOOL_TYPE);
 
-	/* We don't care about them and it can cause unnecessary wakeups */
-	libevdev_disable_event_code(device->evdev, EV_MSC, MSC_TIMESTAMP);
+	/* Asus UX302LA touchpad doesn't update the pressure values once two
+	 * fingers are down. So let's just pretend it doesn't have pressure
+	 * at all. https://gitlab.freedesktop.org/libinput/libinput/issues/145
+	 */
+	if (evdev_device_has_model_quirk(device,
+					 QUIRK_MODEL_ASUS_UX320LA_TOUCHPAD)) {
+		libevdev_disable_event_code(device->evdev,
+					    EV_ABS,
+					    ABS_MT_PRESSURE);
+		libevdev_disable_event_code(device->evdev,
+					    EV_ABS,
+					    ABS_PRESSURE);
+	}
+
+	/* Generally we don't care about MSC_TIMESTAMP and it can cause
+	 * unnecessary wakeups but on some devices we need to watch it for
+	 * pointer jumps */
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q ||
+	    !quirks_get_string(q, QUIRK_ATTR_MSC_TIMESTAMP, &prop) ||
+	    !streq(prop, "watch")) {
+		libevdev_disable_event_code(device->evdev, EV_MSC, MSC_TIMESTAMP);
+	}
+	quirks_unref(q);
 }
 
 static void
@@ -1826,14 +2086,48 @@ libevdev_log_func(const struct libevdev *evdev,
 	log_msg_va(libinput, pri, fmt, args);
 }
 
+static bool
+udev_device_should_be_ignored(struct udev_device *udev_device)
+{
+	const char *value;
+
+#if HAVE_UDEV
+	value = udev_device_get_property_value(udev_device,
+					       "LIBINPUT_IGNORE_DEVICE");
+#else
+	value = NULL;
+#endif
+
+	return value && !streq(value, "0");
+}
+
 struct evdev_device *
-evdev_device_create(struct libinput_seat *seat, const char *devnode, const char *sysname)
+evdev_device_create(struct libinput_seat *seat,
+		    struct udev_device *udev_device,
+		    const char *devnode, const char *sysname)
 {
 	struct libinput *libinput = seat->libinput;
 	struct evdev_device *device = NULL;
 	int rc;
 	int fd;
 	int unhandled_device = 0;
+
+#if HAVE_UDEV
+	if (udev_device) {
+		devnode = udev_device_get_devnode(udev_device);
+		sysname = udev_device_get_sysname(udev_device);
+	}
+#endif
+
+	if (!devnode) {
+		log_info(libinput, "%s: no device node associated\n", sysname);
+		return NULL;
+	}
+
+	if (udev_device_should_be_ignored(udev_device)) {
+		log_debug(libinput, "%s: device is ignored\n", sysname);
+		return NULL;
+	}
 
 	/* Use non-blocking mode so that we can loop on read on
 	 * evdev_device_data() until all events on the fd are
@@ -1848,6 +2142,9 @@ evdev_device_create(struct libinput_seat *seat, const char *devnode, const char 
 			 strerror(-fd));
 		return NULL;
 	}
+
+	if (!evdev_device_have_same_syspath(udev_device, fd))
+		goto err;
 
 	device = zalloc(sizeof *device);
 
@@ -1868,6 +2165,11 @@ evdev_device_create(struct libinput_seat *seat, const char *devnode, const char 
 	device->seat_caps = 0;
 	device->is_mt = 0;
 	device->mtdev = NULL;
+#if HAVE_UDEV
+	device->udev_device = udev_device_ref(udev_device);
+#else
+	device->udev_device = NULL;
+#endif
 	device->dispatch = NULL;
 	device->fd = fd;
 	device->devnode = devnode;
@@ -1905,7 +2207,7 @@ evdev_device_create(struct libinput_seat *seat, const char *devnode, const char 
 	if (!device->source)
 		goto err;
 
-	if (!evdev_set_device_group(device))
+	if (!evdev_set_device_group(device, udev_device))
 		goto err;
 
 	list_insert(seat->devices_list.prev, &device->base.link);
@@ -1932,7 +2234,11 @@ evdev_device_get_output(struct evdev_device *device)
 const char *
 evdev_device_get_sysname(struct evdev_device *device)
 {
+#if HAVE_UDEV
+	return udev_device_get_sysname(device->udev_device);
+#else
 	return device->sysname;
+#endif
 }
 
 const char *
@@ -1951,6 +2257,16 @@ unsigned int
 evdev_device_get_id_vendor(struct evdev_device *device)
 {
 	return libevdev_get_id_vendor(device->evdev);
+}
+
+struct udev_device *
+evdev_device_get_udev_device(struct evdev_device *device)
+{
+#if HAVE_UDEV
+	return udev_device_ref(device->udev_device);
+#else
+	return NULL;
+#endif
 }
 
 void
@@ -2031,7 +2347,12 @@ evdev_read_calibration_prop(struct evdev_device *device)
 	const char *prop;
 	float calibration[6];
 
+#if HAVE_UDEV
+	prop = udev_device_get_property_value(device->udev_device,
+					      "LIBINPUT_CALIBRATION_MATRIX");
+#else
 	prop = NULL;
+#endif
 
 	if (prop == NULL)
 		return;
@@ -2065,7 +2386,11 @@ evdev_read_fuzz_prop(struct evdev_device *device, unsigned int code)
 	if (rc == -1)
 		return 0;
 
+#if HAVE_UDEV
+	prop = udev_device_get_property_value(device->udev_device, name);
+#else
 	prop = NULL;
+#endif
 	if (prop == NULL)
 		return 0;
 
@@ -2391,6 +2716,11 @@ evdev_device_resume(struct evdev_device *device)
 	if (fd < 0)
 		return -errno;
 
+	if (!evdev_device_have_same_syspath(device->udev_device, fd)) {
+		close_restricted(libinput, fd);
+		return -ENODEV;
+	}
+
 	evdev_drain_fd(fd);
 
 	device->fd = fd;
@@ -2476,6 +2806,9 @@ evdev_device_destroy(struct evdev_device *device)
 	libinput_timer_destroy(&device->middlebutton.timer);
 	libinput_seat_unref(device->base.seat);
 	libevdev_free(device->evdev);
+#if HAVE_UDEV
+	udev_device_unref(device->udev_device);
+#endif
 	free(device);
 }
 

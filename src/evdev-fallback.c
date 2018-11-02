@@ -381,6 +381,34 @@ fallback_flush_mt_up(struct fallback_dispatch *dispatch,
 }
 
 static bool
+fallback_flush_mt_cancel(struct fallback_dispatch *dispatch,
+			 struct evdev_device *device,
+			 int slot_idx,
+			 uint64_t time)
+{
+	struct libinput_device *base = &device->base;
+	struct libinput_seat *seat = base->seat;
+	struct mt_slot *slot;
+	int seat_slot;
+
+	if (!(device->seat_caps & EVDEV_DEVICE_TOUCH))
+		return false;
+
+	slot = &dispatch->mt.slots[slot_idx];
+	seat_slot = slot->seat_slot;
+	slot->seat_slot = -1;
+
+	if (seat_slot == -1)
+		return false;
+
+	seat->slot_map &= ~(1 << seat_slot);
+
+	touch_notify_touch_cancel(base, time, slot_idx, seat_slot);
+
+	return true;
+}
+
+static bool
 fallback_flush_st_down(struct fallback_dispatch *dispatch,
 		       struct evdev_device *device,
 		       uint64_t time)
@@ -458,6 +486,31 @@ fallback_flush_st_up(struct fallback_dispatch *dispatch,
 	seat->slot_map &= ~(1 << seat_slot);
 
 	touch_notify_touch_up(base, time, -1, seat_slot);
+
+	return true;
+}
+
+static bool
+fallback_flush_st_cancel(struct fallback_dispatch *dispatch,
+			 struct evdev_device *device,
+			 uint64_t time)
+{
+	struct libinput_device *base = &device->base;
+	struct libinput_seat *seat = base->seat;
+	int seat_slot;
+
+	if (!(device->seat_caps & EVDEV_DEVICE_TOUCH))
+		return false;
+
+	seat_slot = dispatch->abs.seat_slot;
+	dispatch->abs.seat_slot = -1;
+
+	if (seat_slot == -1)
+		return false;
+
+	seat->slot_map &= ~(1 << seat_slot);
+
+	touch_notify_touch_cancel(base, time, -1, seat_slot);
 
 	return true;
 }
@@ -554,6 +607,21 @@ fallback_process_touch(struct fallback_dispatch *dispatch,
 		if (e->value >= 0) {
 			dispatch->pending_event |= EVDEV_ABSOLUTE_MT;
 			slot->state = SLOT_STATE_BEGIN;
+			if (dispatch->mt.has_palm) {
+				int v;
+				v = libevdev_get_slot_value(device->evdev,
+							    dispatch->mt.slot,
+							    ABS_MT_TOOL_TYPE);
+				switch (v) {
+				case MT_TOOL_PALM:
+					/* new touch, no cancel needed */
+					slot->palm_state = PALM_WAS_PALM;
+					break;
+				default:
+					slot->palm_state = PALM_NONE;
+					break;
+				}
+			}
 		} else {
 			dispatch->pending_event |= EVDEV_ABSOLUTE_MT;
 			slot->state = SLOT_STATE_END;
@@ -569,6 +637,26 @@ fallback_process_touch(struct fallback_dispatch *dispatch,
 	case ABS_MT_POSITION_Y:
 		evdev_device_check_abs_axis_range(device, e->code, e->value);
 		dispatch->mt.slots[dispatch->mt.slot].point.y = e->value;
+		dispatch->pending_event |= EVDEV_ABSOLUTE_MT;
+		slot->dirty = true;
+		break;
+	case ABS_MT_TOOL_TYPE:
+		/* The transitions matter - we (may) need to send a touch
+		 * cancel event if we just switched to a palm touch. And the
+		 * kernel may switch back to finger but we keep the touch as
+		 * palm - but then we need to reset correctly on a new touch
+		 * sequence.
+		 */
+		switch (e->value) {
+		case MT_TOOL_PALM:
+			if (slot->palm_state == PALM_NONE)
+				slot->palm_state = PALM_NEW;
+			break;
+		default:
+			if (slot->palm_state == PALM_IS_PALM)
+				slot->palm_state = PALM_WAS_PALM;
+			break;
+		}
 		dispatch->pending_event |= EVDEV_ABSOLUTE_MT;
 		slot->dirty = true;
 		break;
@@ -781,6 +869,78 @@ fallback_any_button_down(struct fallback_dispatch *dispatch,
 	return false;
 }
 
+static inline bool
+fallback_flush_mt_events(struct fallback_dispatch *dispatch,
+			 struct evdev_device *device,
+			 uint64_t time)
+{
+	bool sent = false;
+
+	for (size_t i = 0; i < dispatch->mt.slots_len; i++) {
+		struct mt_slot *slot = &dispatch->mt.slots[i];
+
+		if (!slot->dirty)
+			continue;
+
+		slot->dirty = false;
+
+		/* Any palm state other than PALM_NEW means we've either
+		 * already cancelled the touch or the touch was never
+		 * a finger anyway and we didn't send the being.
+		 */
+		if (slot->palm_state == PALM_NEW) {
+			if (slot->state != SLOT_STATE_BEGIN)
+				sent = fallback_flush_mt_cancel(dispatch,
+								device,
+								i,
+								time);
+			slot->palm_state = PALM_IS_PALM;
+		} else if (slot->palm_state == PALM_NONE) {
+			switch (slot->state) {
+			case SLOT_STATE_BEGIN:
+				sent = fallback_flush_mt_down(dispatch,
+							      device,
+							      i,
+							      time);
+				break;
+			case SLOT_STATE_UPDATE:
+				sent = fallback_flush_mt_motion(dispatch,
+								device,
+								i,
+								time);
+				break;
+			case SLOT_STATE_END:
+				sent = fallback_flush_mt_up(dispatch,
+							    device,
+							    i,
+							    time);
+				break;
+			case SLOT_STATE_NONE:
+				break;
+			}
+		}
+
+		/* State machine continues independent of the palm state */
+		switch (slot->state) {
+		case SLOT_STATE_BEGIN:
+			slot->state = SLOT_STATE_UPDATE;
+			break;
+		case SLOT_STATE_UPDATE:
+			break;
+		case SLOT_STATE_END:
+			slot->state = SLOT_STATE_NONE;
+			break;
+		case SLOT_STATE_NONE:
+			/* touch arbitration may swallow the begin,
+			 * so we may get updates for a touch still
+			 * in NONE state */
+			break;
+		}
+	}
+
+	return sent;
+}
+
 static void
 fallback_handle_state(struct fallback_dispatch *dispatch,
 		      struct evdev_device *device,
@@ -817,38 +977,10 @@ fallback_handle_state(struct fallback_dispatch *dispatch,
 	}
 
 	/* Multitouch devices */
-	if (dispatch->pending_event & EVDEV_ABSOLUTE_MT) {
-		bool sent = false;
-		for (size_t i = 0; i < dispatch->mt.slots_len; i++) {
-			struct mt_slot *slot = &dispatch->mt.slots[i];
-
-			if (!slot->dirty)
-				continue;
-
-			if (slot->state == SLOT_STATE_BEGIN) {
-				sent = fallback_flush_mt_down(dispatch,
-							      device,
-							      i,
-							      time);
-				slot->state = SLOT_STATE_UPDATE;
-			} else if (slot->state == SLOT_STATE_UPDATE) {
-				sent = fallback_flush_mt_motion(dispatch,
-								device,
-								i,
-								time);
-			} else if (slot->state == SLOT_STATE_END) {
-				sent = fallback_flush_mt_up(dispatch,
+	if (dispatch->pending_event & EVDEV_ABSOLUTE_MT)
+		need_touch_frame = fallback_flush_mt_events(dispatch,
 							    device,
-							    i,
 							    time);
-				slot->state = SLOT_STATE_NONE;
-			}
-
-			slot->dirty = false;
-		}
-
-		need_touch_frame = sent;
-	}
 
 	if (need_touch_frame)
 		touch_notify_frame(&device->base, time);
@@ -908,14 +1040,14 @@ fallback_interface_process(struct evdev_dispatch *evdev_dispatch,
 }
 
 static void
-release_touches(struct fallback_dispatch *dispatch,
-		struct evdev_device *device,
-		uint64_t time)
+cancel_touches(struct fallback_dispatch *dispatch,
+	       struct evdev_device *device,
+	       uint64_t time)
 {
 	unsigned int idx;
 	bool need_frame = false;
 
-	need_frame = fallback_flush_st_up(dispatch, device, time);
+	need_frame = fallback_flush_st_cancel(dispatch, device, time);
 
 	for (idx = 0; idx < dispatch->mt.slots_len; idx++) {
 		struct mt_slot *slot = &dispatch->mt.slots[idx];
@@ -923,7 +1055,7 @@ release_touches(struct fallback_dispatch *dispatch,
 		if (slot->seat_slot == -1)
 			continue;
 
-		if (fallback_flush_mt_up(dispatch, device, idx, time))
+		if (fallback_flush_mt_cancel(dispatch, device, idx, time))
 			need_frame = true;
 	}
 
@@ -991,7 +1123,7 @@ fallback_return_to_neutral_state(struct fallback_dispatch *dispatch,
 	if ((time = libinput_now(libinput)) == 0)
 		return;
 
-	release_touches(dispatch, device, time);
+	cancel_touches(dispatch, device, time);
 	release_pressed_keys(dispatch, device, time);
 	memset(dispatch->hw_key_mask, 0, sizeof(dispatch->hw_key_mask));
 	memset(dispatch->hw_key_mask, 0, sizeof(dispatch->last_hw_key_mask));
@@ -1187,11 +1319,15 @@ fallback_keyboard_pair_tablet_mode(struct evdev_device *keyboard,
 	struct fallback_dispatch *dispatch =
 		fallback_dispatch(keyboard->dispatch);
 
+	if ((keyboard->tags & EVDEV_TAG_EXTERNAL_KEYBOARD))
+		return;
+
 	if ((keyboard->tags &
 	     (EVDEV_TAG_TRACKPOINT|EVDEV_TAG_INTERNAL_KEYBOARD)) == 0)
 		return;
 
-	if (keyboard->model_flags & EVDEV_MODEL_TABLET_MODE_NO_SUSPEND)
+	if (evdev_device_has_model_quirk(keyboard,
+					 QUIRK_MODEL_TABLET_MODE_NO_SUSPEND))
 		return;
 
 	if ((tablet_mode_switch->tags & EVDEV_TAG_TABLET_MODE_SWITCH) == 0)
@@ -1201,7 +1337,7 @@ fallback_keyboard_pair_tablet_mode(struct evdev_device *keyboard,
 		return;
 
 	evdev_log_debug(keyboard,
-			"tablet_mode_switch: activated for %s<->%s\n",
+			"tablet_mode_switch: paired %s<->%s\n",
 			keyboard->devname,
 			tablet_mode_switch->devname);
 
@@ -1213,8 +1349,10 @@ fallback_keyboard_pair_tablet_mode(struct evdev_device *keyboard,
 
 	if (evdev_device_switch_get_state(tablet_mode_switch,
 					  LIBINPUT_SWITCH_TABLET_MODE)
-		    == LIBINPUT_SWITCH_STATE_ON)
+		    == LIBINPUT_SWITCH_STATE_ON) {
+		evdev_log_debug(keyboard, "tablet-mode: suspending device\n");
 		fallback_suspend(dispatch, keyboard);
+	}
 }
 
 static void
@@ -1400,6 +1538,9 @@ fallback_dispatch_init_slots(struct fallback_dispatch *dispatch,
 	dispatch->mt.slots = slots;
 	dispatch->mt.slots_len = num_slots;
 	dispatch->mt.slot = active_slot;
+	dispatch->mt.has_palm = libevdev_has_event_code(evdev,
+							EV_ABS,
+							ABS_MT_TOOL_TYPE);
 
 	if (device->abs.absinfo_x->fuzz || device->abs.absinfo_y->fuzz) {
 		dispatch->mt.want_hysteresis = true;

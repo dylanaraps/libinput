@@ -29,11 +29,13 @@
 
 struct path_input {
 	struct libinput base;
+	struct udev *udev;
 	struct list path_list;
 };
 
 struct path_device {
 	struct list link;
+	struct udev_device *udev_device;
 	char *devnode;
 	char *sysname;
 };

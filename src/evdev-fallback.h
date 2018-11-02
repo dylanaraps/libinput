@@ -45,6 +45,29 @@ enum debounce_state {
 	DEBOUNCE_STATE_DISABLED = 999,
 };
 
+enum mt_slot_state {
+	SLOT_STATE_NONE,
+	SLOT_STATE_BEGIN,
+	SLOT_STATE_UPDATE,
+	SLOT_STATE_END,
+};
+
+enum palm_state {
+	PALM_NONE,
+	PALM_NEW,
+	PALM_IS_PALM,
+	PALM_WAS_PALM, /* this touch sequence was a palm but isn't now */
+};
+
+struct mt_slot {
+	bool dirty;
+	enum mt_slot_state state;
+	int32_t seat_slot;
+	struct device_coords point;
+	struct device_coords hysteresis_center;
+	enum palm_state palm_state;
+};
+
 struct fallback_dispatch {
 	struct evdev_dispatch base;
 	struct evdev_device *device;
@@ -69,6 +92,7 @@ struct fallback_dispatch {
 		size_t slots_len;
 		bool want_hysteresis;
 		struct device_coords hysteresis_margin;
+		bool has_palm;
 	} mt;
 
 	struct device_coords rel;
@@ -99,10 +123,6 @@ struct fallback_dispatch {
 	bool ignore_events;
 
 	struct {
-#if 0
-		enum evdev_debounce_state state;
-		uint64_t button_up_time;
-#endif
 		unsigned int button_code;
 		uint64_t button_time;
 		struct libinput_timer timer;

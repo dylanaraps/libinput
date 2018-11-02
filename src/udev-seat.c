@@ -82,9 +82,7 @@ device_added(struct udev_device *udev_device,
 			return -1;
 	}
 
-	device = evdev_device_create(&seat->base,
-				     udev_device_get_devnode(udev_device),
-				     udev_device_get_sysname(udev_device));
+	device = evdev_device_create(&seat->base, udev_device, NULL);
 	libinput_seat_unref(&seat->base);
 
 	if (device == EVDEV_UNHANDLED_DEVICE) {
@@ -383,6 +381,13 @@ libinput_udev_assign_seat(struct libinput *libinput,
 			  const char *seat_id)
 {
 	struct udev_input *input = (struct udev_input*)libinput;
+
+	/* We cannot do this during udev_create_context because the log
+	 * handler isn't set up there but we really want to log to the right
+	 * place if the quirks run into parser errors. So we have to do it
+	 * here since we can expect the log handler to be set up by now.
+	 */
+	libinput_init_quirks(libinput);
 
 	if (!seat_id)
 		return -1;

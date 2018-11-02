@@ -25,7 +25,9 @@
 #define _SHARED_H_
 
 #include <stdbool.h>
+#include <limits.h>
 
+#include <quirks.h>
 #include <libinput.h>
 
 enum configuration_options {
@@ -111,5 +113,14 @@ int tools_exec_command(const char *prefix, int argc, char **argv);
 
 bool find_touchpad_device(char *path, size_t path_len);
 bool is_touchpad_device(const char *devnode);
+
+void
+tools_list_device_quirks(struct quirks_context *ctx,
+			 struct udev_device *device,
+			 void (*callback)(void *userdata, const char *str),
+			 void *userdata);
+
+bool
+tools_execdir_is_builddir(char *execdir_out, size_t sz);
 
 #endif

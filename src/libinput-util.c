@@ -62,6 +62,20 @@ list_insert(struct list *list, struct list *elm)
 }
 
 void
+list_append(struct list *list, struct list *elm)
+{
+	assert((list->next != NULL && list->prev != NULL) ||
+	       !"list->next|prev is NULL, possibly missing list_init()");
+	assert(((elm->next == NULL && elm->prev == NULL) || list_empty(elm)) ||
+	       !"elm->next|prev is not NULL, list node used twice?");
+
+	elm->next = list;
+	elm->prev = list->prev;
+	list->prev = elm;
+	elm->prev->next = elm;
+}
+
+void
 list_remove(struct list *elm)
 {
 	assert((elm->next != NULL && elm->prev != NULL) ||
@@ -238,28 +252,6 @@ parse_mouse_wheel_click_angle_property(const char *prop)
 }
 
 /**
- * Helper function to parse the TRACKPOINT_CONST_ACCEL property from udev.
- * Property is of the form:
- * TRACKPOINT_CONST_ACCEL=<float>
- *
- * @param prop The value of the udev property (without the TRACKPOINT_CONST_ACCEL=)
- * @return The acceleration, or 0.0 on error.
- */
-double
-parse_trackpoint_accel_property(const char *prop)
-{
-	double accel;
-
-	if (!prop)
-		return 0.0;
-
-	if (!safe_atod(prop, &accel))
-		accel = 0.0;
-
-	return accel;
-}
-
-/**
  * Parses a simple dimension string in the form of "10x40". The two
  * numbers must be positive integers in decimal notation.
  * On success, the two numbers are stored in w and h. On failure, w and h
@@ -281,7 +273,7 @@ parse_dimension_property(const char *prop, size_t *w, size_t *h)
 	if (sscanf(prop, "%dx%d", &x, &y) != 2)
 		return false;
 
-	if (x < 0 || y < 0)
+	if (x <= 0 || y <= 0)
 		return false;
 
 	*w = (size_t)x;
@@ -407,81 +399,6 @@ parse_range_property(const char *prop, int *hi, int *lo)
 }
 
 /**
- * Helper function to parse the LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD
- * property from udev. Property is of the form:
- * LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=<integer>
- * Where the number indicates the minimum threshold to consider a touch to
- * be a palm.
- *
- * @param prop The value of the udev property (without the *
- * LIBINPUT_ATTR_PALM_PRESSURE_THRESHOLD=)
- * @return The pressure threshold or 0 on error
- */
-int
-parse_palm_pressure_property(const char *prop)
-{
-	int threshold = 0;
-
-	if (!prop)
-		return 0;
-
-	if (!safe_atoi(prop, &threshold) || threshold < 0)
-		return 0;
-
-        return threshold;
-}
-
-/**
- * Helper function to parse the LIBINPUT_ATTR_PALM_SIZE_THRESHOLD property
- * from udev. Property is of the form:
- * LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=<integer>
- * Where the number indicates the minimum threshold to consider a touch to
- * be a palm.
- *
- * @param prop The value of the udev property (without the
- * LIBINPUT_ATTR_PALM_SIZE_THRESHOLD=)
- * @return The pressure threshold or 0 on error
- */
-int
-parse_palm_size_property(const char *prop)
-{
-	int thr = 0;
-
-	if (!prop)
-		return 0;
-
-	if (!safe_atoi(prop, &thr) || thr < 0 || thr > 2028)
-		return 0;
-
-        return thr;
-}
-
-/**
- * Helper function to parse the LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD
- * property from udev. Property is of the form:
- * LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD=<integer>
- * Where the number indicates the minimum threshold to consider a touch to
- * be a thumb.
- *
- * @param prop The value of the udev property (without the
- * LIBINPUT_ATTR_THUMB_PRESSURE_THRESHOLD=)
- * @return The pressure threshold or 0 on error
- */
-int
-parse_thumb_pressure_property(const char *prop)
-{
-	int threshold = 0;
-
-	if (!prop)
-		return 0;
-
-	if (!safe_atoi(prop, &threshold) || threshold < 0)
-		return 0;
-
-        return threshold;
-}
-
-/**
  * Return the next word in a string pointed to by state before the first
  * separator character. Call repeatedly to tokenize a whole string.
  *
@@ -586,11 +503,17 @@ strv_join(char **strv, const char *joiner)
 	if (!strv || !joiner)
 		return NULL;
 
+	if (strv[0] == NULL)
+		return NULL;
+
 	for (s = strv, count = 0; *s; s++, count++) {
 		slen += strlen(*s);
 	}
 
 	assert(slen < 1000);
+	assert(strlen(joiner) < 1000);
+	assert(count > 0);
+	assert(count < 100);
 
 	slen += (count - 1) * strlen(joiner);
 

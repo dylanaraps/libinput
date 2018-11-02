@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include <limits.h>
 
+#include "quirks.h"
 #include "evdev-mt-touchpad.h"
 
 #define DEFAULT_TRACKPOINT_ACTIVITY_TIMEOUT ms2us(300)
@@ -97,6 +98,9 @@ tp_calculate_motion_speed(struct tp_dispatch *tp, struct tp_touch *t)
 	if (!tp->has_mt || tp->semi_mt)
 		return;
 
+	if (t->state != TOUCH_UPDATE)
+		return;
+
 	/* This doesn't kick in until we have at least 4 events in the
 	 * motion history. As a side-effect, this automatically handles the
 	 * 2fg scroll where a finger is down and moving fast before the
@@ -154,12 +158,13 @@ tp_detect_wobbling(struct tp_dispatch *tp,
 {
 	int dx, dy;
 	uint64_t dtime;
+	const struct device_coords* prev_point;
 
 	if (tp->nfingers_down != 1 ||
 	    tp->nfingers_down != tp->old_nfingers_down)
 		return;
 
-	if (tp->hysteresis.enabled)
+	if (tp->hysteresis.enabled || t->history.count == 0)
 		return;
 
 	if (!(tp->queued & TOUCHPAD_EVENT_MOTION)) {
@@ -167,18 +172,12 @@ tp_detect_wobbling(struct tp_dispatch *tp,
 		return;
 	}
 
-	if (t->last_point.x == 0) { /* first invocation */
-		dx = 0;
-		dy = 0;
-	} else {
-		dx = t->last_point.x - t->point.x;
-		dy = t->last_point.y - t->point.y;
-	}
-
+	prev_point = &tp_motion_history_offset(t, 0)->point;
+	dx = prev_point->x - t->point.x;
+	dy = prev_point->y - t->point.y;
 	dtime = time - tp->hysteresis.last_motion_time;
 
 	tp->hysteresis.last_motion_time = time;
-	t->last_point = t->point;
 
 	if ((dx == 0 && dy != 0) || dtime > ms2us(40)) {
 		t->hysteresis.x_motion_history = 0;
@@ -194,7 +193,7 @@ tp_detect_wobbling(struct tp_dispatch *tp,
 			tp->hysteresis.enabled = true;
 			evdev_log_debug(tp->device,
 					"hysteresis enabled. "
-					"See %stouchpad_jitter.html for details\n",
+					"See %stouchpad-jitter.html for details\n",
 					HTTP_DOC_LINK);
 		}
 	}
@@ -306,6 +305,18 @@ tp_new_touch(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	    t->state == TOUCH_HOVERING)
 		return;
 
+	/* Bug #161: touch ends in the same event frame where it restarts
+	   again. That's a kernel bug, so let's complain. */
+	if (t->state == TOUCH_MAYBE_END) {
+		evdev_log_bug_kernel(tp->device,
+				     "touch %d ended and began in in same frame.\n",
+				     t->index);
+		tp->nfingers_down++;
+		t->state = TOUCH_UPDATE;
+		t->has_ended = false;
+		return;
+	}
+
 	/* we begin the touch as hovering because until BTN_TOUCH happens we
 	 * don't know if it's a touch down or not. And BTN_TOUCH may happen
 	 * after ABS_MT_TRACKING_ID */
@@ -336,6 +347,7 @@ tp_begin_touch(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	t->thumb.first_touch_time = time;
 	t->tap.is_thumb = false;
 	t->tap.is_palm = false;
+	t->speed.exceeded_count = 0;
 	assert(tp->nfingers_down >= 1);
 	tp->hysteresis.last_motion_time = time;
 }
@@ -413,6 +425,7 @@ tp_end_touch(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	t->pinned.is_pinned = false;
 	t->time = time;
 	t->palm.time = 0;
+	t->speed.exceeded_count = 0;
 	tp->queued |= TOUCHPAD_EVENT_MOTION;
 }
 
@@ -558,7 +571,7 @@ tp_restore_synaptics_touches(struct tp_dispatch *tp,
 		return;
 
 	if (tp->nfingers_down >= nfake_touches ||
-	    tp->nfingers_down == tp->num_slots)
+	    (tp->nfingers_down == tp->num_slots && nfake_touches == tp->num_slots))
 		return;
 
 	/* Synaptics devices may end touch 2 on BTN_TOOL_TRIPLETAP
@@ -675,6 +688,18 @@ tp_process_key(struct tp_dispatch *tp,
 			tp_process_trackpoint_button(tp, e, time);
 			break;
 	}
+}
+
+static void
+tp_process_msc(struct tp_dispatch *tp,
+	       const struct input_event *e,
+	       uint64_t time)
+{
+	if (e->code != MSC_TIMESTAMP)
+		return;
+
+	tp->quirks.msc_timestamp.now = e->value;
+	tp->queued |= TOUCHPAD_EVENT_TIMESTAMP;
 }
 
 static void
@@ -1116,9 +1141,9 @@ tp_thumb_detect(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	}
 
 	/* If the thumb moves by more than 7mm, it's not a resting thumb */
-	if (t->state == TOUCH_BEGIN)
+	if (t->state == TOUCH_BEGIN) {
 		t->thumb.initial = t->point;
-	else if (t->state == TOUCH_UPDATE) {
+	} else if (t->state == TOUCH_UPDATE) {
 		struct device_float_coords delta;
 		struct phys_coords mm;
 
@@ -1130,18 +1155,46 @@ tp_thumb_detect(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 		}
 	}
 
+	/* If the finger is below the upper thumb line and we have another
+	 * finger in the same area, neither finger is a thumb (unless we've
+	 * already labeled it as such).
+	 */
+	if (t->point.y > tp->thumb.upper_thumb_line &&
+	    tp->nfingers_down > 1) {
+		struct tp_touch *other;
+
+		tp_for_each_touch(tp, other) {
+			if (other->state != TOUCH_BEGIN &&
+			    other->state != TOUCH_UPDATE)
+				continue;
+
+			if (other->point.y > tp->thumb.upper_thumb_line) {
+				t->thumb.state = THUMB_STATE_NO;
+				if (other->thumb.state == THUMB_STATE_MAYBE)
+					other->thumb.state = THUMB_STATE_NO;
+				break;
+			}
+		}
+	}
+
 	/* Note: a thumb at the edge of the touchpad won't trigger the
 	 * threshold, the surface area is usually too small. So we have a
 	 * two-stage detection: pressure and time within the area.
 	 * A finger that remains at the very bottom of the touchpad becomes
 	 * a thumb.
 	 */
-	if (t->pressure > tp->thumb.threshold)
+	if (tp->thumb.use_pressure &&
+	    t->pressure > tp->thumb.pressure_threshold) {
 		t->thumb.state = THUMB_STATE_YES;
-	else if (t->point.y > tp->thumb.lower_thumb_line &&
+	} else if (tp->thumb.use_size &&
+		 (t->major > tp->thumb.size_threshold) &&
+		 (t->minor < (tp->thumb.size_threshold * 0.6))) {
+		t->thumb.state = THUMB_STATE_YES;
+	} else if (t->point.y > tp->thumb.lower_thumb_line &&
 		 tp->scroll.method != LIBINPUT_CONFIG_SCROLL_EDGE &&
-		 t->thumb.first_touch_time + THUMB_MOVE_TIMEOUT < time)
+		 t->thumb.first_touch_time + THUMB_MOVE_TIMEOUT < time) {
 		t->thumb.state = THUMB_STATE_YES;
+	}
 
 	/* now what? we marked it as thumb, so:
 	 *
@@ -1440,12 +1493,19 @@ tp_need_motion_history_reset(struct tp_dispatch *tp)
 }
 
 static bool
-tp_detect_jumps(const struct tp_dispatch *tp, struct tp_touch *t)
+tp_detect_jumps(const struct tp_dispatch *tp,
+		struct tp_touch *t,
+		uint64_t time)
 {
 	struct device_coords delta;
 	struct phys_coords mm;
-	const int JUMP_THRESHOLD_MM = 20;
 	struct tp_history_point *last;
+	double abs_distance, rel_distance;
+	bool is_jump = false;
+	uint64_t tdelta;
+	/* Reference interval from the touchpad the various thresholds
+	 * were measured from */
+	unsigned int reference_interval = ms2us(12);
 
 	/* We haven't seen pointer jumps on Wacom tablets yet, so exclude
 	 * those.
@@ -1453,17 +1513,45 @@ tp_detect_jumps(const struct tp_dispatch *tp, struct tp_touch *t)
 	if (tp->device->model_flags & EVDEV_MODEL_WACOM_TOUCHPAD)
 		return false;
 
-	if (t->history.count == 0)
+	if (t->history.count == 0) {
+		t->jumps.last_delta_mm = 0.0;
 		return false;
+	}
 
 	/* called before tp_motion_history_push, so offset 0 is the most
 	 * recent coordinate */
 	last = tp_motion_history_offset(t, 0);
+	tdelta = time - last->time;
+
+	/* For test devices we always force the time delta to 12, at least
+	   until the test suite actually does proper intervals. */
+	if (tp->device->model_flags & EVDEV_MODEL_TEST_DEVICE)
+		reference_interval = tdelta;
+
+	/* If the last frame is more than 25ms ago, we have irregular
+	 * frames, who knows what's a pointer jump here and what's
+	 * legitimate movement.... */
+	if (tdelta > 2 * reference_interval || tdelta == 0)
+		return false;
+
+	/* We historically expected ~12ms frame intervals, so the numbers
+	   below are normalized to that (and that's also where the
+	   measured data came from) */
 	delta.x = abs(t->point.x - last->point.x);
 	delta.y = abs(t->point.y - last->point.y);
 	mm = evdev_device_unit_delta_to_mm(tp->device, &delta);
+	abs_distance = hypot(mm.x, mm.y) * reference_interval/tdelta;
+	rel_distance = abs_distance - t->jumps.last_delta_mm;
 
-	return hypot(mm.x, mm.y) > JUMP_THRESHOLD_MM;
+	/* Cursor jump if:
+	 * - current single-event delta is >20mm, or
+	 * - we increased the delta by over 7mm within a 12ms frame.
+	 *   (12ms simply because that's what I measured)
+	 */
+	is_jump = abs_distance > 20.0 || rel_distance > 7;
+	t->jumps.last_delta_mm = abs_distance;
+
+	return is_jump;
 }
 
 static void
@@ -1476,6 +1564,10 @@ tp_detect_thumb_while_moving(struct tp_dispatch *tp)
 	struct phys_coords mm;
 
 	tp_for_each_touch(tp, t) {
+		if (t->state == TOUCH_NONE ||
+		    t->state == TOUCH_HOVERING)
+			continue;
+
 		if (t->state != TOUCH_BEGIN)
 			first = t;
 		else
@@ -1508,10 +1600,131 @@ tp_detect_thumb_while_moving(struct tp_dispatch *tp)
 	second->thumb.state = THUMB_STATE_YES;
 }
 
+/**
+ * Rewrite the motion history so that previous points' timestamps are the
+ * current point's timestamp minus whatever MSC_TIMESTAMP gives us.
+ *
+ * This must be called before tp_motion_history_push()
+ *
+ * @param t The touch point
+ * @param jumping_interval The large time interval in µs
+ * @param normal_interval Normal hw interval in µs
+ * @param time Current time in µs
+ */
+static inline void
+tp_motion_history_fix_last(struct tp_dispatch *tp,
+			   struct tp_touch *t,
+			   unsigned int jumping_interval,
+			   unsigned int normal_interval,
+			   uint64_t time)
+{
+	if (t->state != TOUCH_UPDATE)
+		return;
+
+	/* We know the coordinates are correct because the touchpad should
+	 * get that bit right. But the timestamps we got from the kernel are
+	 * messed up, so we go back in the history and fix them.
+	 *
+	 * This way the next delta is huge but it's over a large time, so
+	 * the pointer accel code should do the right thing.
+	 */
+	for (int i = 0; i < (int)t->history.count; i++) {
+		struct tp_history_point *p;
+
+		p = tp_motion_history_offset(t, i);
+		p->time = time - jumping_interval - normal_interval * i;
+	}
+}
+
+static void
+tp_process_msc_timestamp(struct tp_dispatch *tp, uint64_t time)
+{
+	struct msc_timestamp *m = &tp->quirks.msc_timestamp;
+
+	/* Pointer jump detection based on MSC_TIMESTAMP.
+
+	   MSC_TIMESTAMP gets reset after a kernel timeout (1s) and on some
+	   devices (Dell XPS) the i2c controller sleeps after a timeout. On
+	   wakeup, some events are swallowed, triggering a cursor jump. The
+	   event sequence after a sleep is always:
+
+	   initial finger down:
+		   ABS_X/Y	x/y
+		   MSC_TIMESTAMP 0
+		   SYN_REPORT +2500ms
+	   second event:
+		   ABS_X/Y	x+n/y+n        # normal movement
+		   MSC_TIMESTAMP 7300          # the hw interval
+		   SYN_REPORT +2ms
+	   third event:
+		   ABS_X/Y	x+lots/y+lots  # pointer jump!
+		   MSC_TIMESTAMP 123456        # well above the hw interval
+		   SYN_REPORT +2ms
+	   fourth event:
+		   ABS_X/Y	x+lots+n/y+lots+n  # all normal again
+		   MSC_TIMESTAMP 123456 + 7300
+		   SYN_REPORT +8ms
+
+	   Our approach is to detect the 0 timestamp, check the interval on
+	   the next event and then calculate the movement for one fictious
+	   event instead, swallowing all other movements. So if the time
+	   delta is equivalent to 10 events and the movement is x, we
+	   instead pretend there was movement of x/10.
+	 */
+	if (m->now == 0) {
+		m->state = JUMP_STATE_EXPECT_FIRST;
+		m->interval = 0;
+		return;
+	}
+
+	switch(m->state) {
+	case JUMP_STATE_EXPECT_FIRST:
+		if (m->now > ms2us(20)) {
+			m->state = JUMP_STATE_IGNORE;
+		} else {
+			m->state = JUMP_STATE_EXPECT_DELAY;
+			m->interval = m->now;
+		}
+		break;
+	case JUMP_STATE_EXPECT_DELAY:
+		if (m->now > m->interval * 2) {
+			uint32_t tdelta; /* µs */
+			struct tp_touch *t;
+
+			/* The current time is > 2 times the interval so we
+			 * have a jump. Fix the motion history */
+			tdelta = m->now - m->interval;
+
+			tp_for_each_touch(tp, t) {
+				tp_motion_history_fix_last(tp,
+							   t,
+							   tdelta,
+							   m->interval,
+							   time);
+			}
+			m->state = JUMP_STATE_IGNORE;
+
+			/* We need to restart the acceleration filter to forget its history.
+			 * The current point becomes the first point in the history there
+			 * (including timestamp) and that accelerates correctly.
+			 * This has a potential to be incorrect but since we only ever see
+			 * those jumps over the first three events it doesn't matter.
+			 */
+			filter_restart(tp->device->pointer.filter, tp, time - tdelta);
+		}
+		break;
+	case JUMP_STATE_IGNORE:
+		break;
+	}
+}
+
 static void
 tp_pre_process_state(struct tp_dispatch *tp, uint64_t time)
 {
 	struct tp_touch *t;
+
+	if (tp->queued & TOUCHPAD_EVENT_TIMESTAMP)
+		tp_process_msc_timestamp(tp, time);
 
 	tp_process_fake_touches(tp, time);
 	tp_unhover_touches(tp, time);
@@ -1563,11 +1776,11 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 			continue;
 		}
 
-		if (tp_detect_jumps(tp, t)) {
+		if (tp_detect_jumps(tp, t, time)) {
 			if (!tp->semi_mt)
 				evdev_log_bug_kernel(tp->device,
 					       "Touch jump detected and discarded.\n"
-					       "See %stouchpad_jumping_cursor.html for details\n",
+					       "See %stouchpad-jumping-cursors.html for details\n",
 					       HTTP_DOC_LINK);
 			tp_motion_history_reset(t);
 		}
@@ -1725,7 +1938,8 @@ tp_debug_touch_state(struct tp_dispatch *tp,
 			t->pressure,
 			tp_touch_active(tp, t) ? "" : "inactive");
 	}
-	evdev_log_debug(device, "touch state: %s\n", buf);
+	if (buf[0] != '\0')
+		evdev_log_debug(device, "touch state: %s\n", buf);
 }
 
 static void
@@ -1745,6 +1959,9 @@ tp_interface_process(struct evdev_dispatch *dispatch,
 		break;
 	case EV_KEY:
 		tp_process_key(tp, e, time);
+		break;
+	case EV_MSC:
+		tp_process_msc(tp, e, time);
 		break;
 	case EV_SYN:
 		tp_handle_state(tp, time);
@@ -2396,12 +2613,18 @@ evdev_tag_touchpad_external(struct evdev_device *device)
 }
 
 static void
-evdev_tag_touchpad(struct evdev_device *device)
+evdev_tag_touchpad(struct evdev_device *device,
+		   struct udev_device *udev_device)
 {
 	int bustype, vendor;
 	const char *prop;
 
+#if HAVE_UDEV
+	prop = udev_device_get_property_value(udev_device,
+					      "ID_INPUT_TOUCHPAD_INTEGRATION");
+#else
 	prop = NULL;
+#endif
 	if (prop) {
 		if (streq(prop, "internal")) {
 			evdev_tag_touchpad_internal(device);
@@ -2426,7 +2649,8 @@ evdev_tag_touchpad(struct evdev_device *device)
 
 	switch (bustype) {
 	case BUS_USB:
-		if (device->model_flags & EVDEV_MODEL_APPLE_TOUCHPAD)
+		if (evdev_device_has_model_quirk(device,
+						 QUIRK_MODEL_APPLE_TOUCHPAD))
 			 evdev_tag_touchpad_internal(device);
 		break;
 	case BUS_BLUETOOTH:
@@ -2484,7 +2708,7 @@ tp_interface_toggle_touch(struct evdev_dispatch *dispatch,
 	} else {
 		/* if in-kernel arbitration is in use and there is a touch
 		 * and a pen in proximity, lifting the pen out of proximity
-		 * causes a touch being for the touch. On a hand-lift the
+		 * causes a touch begin for the touch. On a hand-lift the
 		 * proximity out precedes the touch up by a few ms, so we
 		 * get what looks like a tap. Fix this by delaying
 		 * arbitration by just a little bit so that any touch in
@@ -2577,7 +2801,8 @@ tp_init_slots(struct tp_dispatch *tp,
 	 * for single-finger movement. See fdo bug 91135
 	 */
 	if (tp->semi_mt ||
-	    device->model_flags & EVDEV_MODEL_HP_PAVILION_DM4_TOUCHPAD) {
+	    evdev_device_has_model_quirk(tp->device,
+					 QUIRK_MODEL_HP_PAVILION_DM4_TOUCHPAD)) {
 		tp->num_slots = 1;
 		tp->slot = 0;
 		tp->has_mt = false;
@@ -2645,6 +2870,8 @@ tp_init_accel(struct tp_dispatch *tp)
 	struct evdev_device *device = tp->device;
 	int res_x, res_y;
 	struct motion_filter *filter;
+	int dpi = device->dpi;
+	bool use_v_avg = device->use_velocity_averaging;
 
 	res_x = tp->device->abs.absinfo_x->resolution;
 	res_y = tp->device->abs.absinfo_y->resolution;
@@ -2660,13 +2887,16 @@ tp_init_accel(struct tp_dispatch *tp)
 	tp->accel.y_scale_coeff = (DEFAULT_MOUSE_DPI/25.4) / res_y;
 	tp->accel.xy_scale_coeff = 1.0 * res_x/res_y;
 
-	if (tp->device->model_flags & EVDEV_MODEL_LENOVO_X230 ||
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_X230) ||
 	    tp->device->model_flags & EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81)
-		filter = create_pointer_accelerator_filter_lenovo_x230(tp->device->dpi);
+		filter = create_pointer_accelerator_filter_lenovo_x230(dpi, use_v_avg);
 	else if (libevdev_get_id_bustype(device->evdev) == BUS_BLUETOOTH)
-		filter = create_pointer_accelerator_filter_touchpad(device->dpi, ms2us(50), ms2us(10));
+		filter = create_pointer_accelerator_filter_touchpad(dpi,
+								    ms2us(50),
+								    ms2us(10),
+								    use_v_avg);
 	else
-		filter = create_pointer_accelerator_filter_touchpad(device->dpi, 0, 0);
+		filter = create_pointer_accelerator_filter_touchpad(dpi, 0, 0, use_v_avg);
 
 	if (!filter)
 		return false;
@@ -2691,7 +2921,8 @@ tp_scroll_get_methods(struct tp_dispatch *tp)
 	/* Any movement with more than one finger has random cursor
 	 * jumps. Don't allow for 2fg scrolling on this device, see
 	 * fdo bug 91135 */
-	if (tp->device->model_flags & EVDEV_MODEL_HP_PAVILION_DM4_TOUCHPAD)
+	if (evdev_device_has_model_quirk(tp->device,
+					 QUIRK_MODEL_HP_PAVILION_DM4_TOUCHPAD))
 		return LIBINPUT_CONFIG_SCROLL_EDGE;
 
 	if (tp->ntouches >= 2)
@@ -2842,15 +3073,25 @@ tp_dwt_config_get_default(struct libinput_device *device)
 static inline bool
 tp_is_tpkb_combo_below(struct evdev_device *device)
 {
-	const char *prop;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	char *prop;
 	enum tpkbcombo_layout layout = TPKBCOMBO_LAYOUT_UNKNOWN;
+	int rc = false;
 
-	prop = NULL;
-	if (!prop)
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q)
 		return false;
 
-	return parse_tpkbcombo_layout_poperty(prop, &layout) &&
-		layout == TPKBCOMBO_LAYOUT_BELOW;
+	if (quirks_get_string(q, QUIRK_ATTR_TPKBCOMBO_LAYOUT, &prop)) {
+		rc = parse_tpkbcombo_layout_poperty(prop, &layout) &&
+			layout == TPKBCOMBO_LAYOUT_BELOW;
+	}
+
+	quirks_unref(q);
+
+	return rc;
 }
 
 static inline bool
@@ -2917,17 +3158,20 @@ static int
 tp_read_palm_pressure_prop(struct tp_dispatch *tp,
 			   const struct evdev_device *device)
 {
-	const char *prop;
-	int threshold;
 	const int default_palm_threshold = 130;
+	uint32_t threshold = default_palm_threshold;
+	struct quirks_context *quirks;
+	struct quirks *q;
 
-	prop = NULL;
-	if (!prop)
-		return default_palm_threshold;
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q)
+		return threshold;
 
-	threshold = parse_palm_pressure_property(prop);
+	quirks_get_uint32(q, QUIRK_ATTR_PALM_PRESSURE_THRESHOLD, &threshold);
+	quirks_unref(q);
 
-	return threshold > 0 ? threshold : default_palm_threshold;
+	return threshold;
 }
 
 static inline void
@@ -2951,23 +3195,26 @@ static inline void
 tp_init_palmdetect_size(struct tp_dispatch *tp,
 			struct evdev_device *device)
 {
-	const char *prop;
-	int threshold;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	uint32_t threshold;
 
-	prop = NULL;
-	if (!prop)
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (!q)
 		return;
 
-	threshold = parse_palm_size_property(prop);
-	if (threshold == 0) {
-		evdev_log_bug_client(device,
-				     "palm: ignoring invalid threshold %s\n",
-				     prop);
-		return;
+	if (quirks_get_uint32(q, QUIRK_ATTR_PALM_SIZE_THRESHOLD, &threshold)) {
+		if (threshold == 0) {
+			evdev_log_bug_client(device,
+					     "palm: ignoring invalid threshold %d\n",
+					     threshold);
+		} else {
+			tp->palm.use_size = true;
+			tp->palm.size_threshold = threshold;
+		}
 	}
-
-	tp->palm.use_size = true;
-	tp->palm.size_threshold = threshold;
+	quirks_unref(q);
 }
 
 static inline void
@@ -3042,33 +3289,16 @@ tp_init_sendevents(struct tp_dispatch *tp,
 			    tp_keyboard_timeout, tp);
 }
 
-static int
-tp_read_thumb_pressure_prop(struct tp_dispatch *tp,
-			    const struct evdev_device *device)
-{
-	struct udev_device *udev_device = device->udev_device;
-	const char *prop;
-	int threshold;
-	const int default_thumb_threshold = 0;
-
-	prop = NULL;
-	if (!prop)
-		return default_thumb_threshold;
-
-	threshold = parse_thumb_pressure_property(prop);
-
-	return threshold > 0 ? threshold : default_thumb_threshold;
-}
-
 static void
 tp_init_thumb(struct tp_dispatch *tp)
 {
 	struct evdev_device *device = tp->device;
-	const struct input_absinfo *abs;
 	double w = 0.0, h = 0.0;
 	struct device_coords edges;
 	struct phys_coords mm = { 0.0, 0.0 };
-	int threshold;
+	uint32_t threshold;
+	struct quirks_context *quirks;
+	struct quirks *q;
 
 	if (!tp->buttons.is_clickpad)
 		return;
@@ -3081,7 +3311,8 @@ tp_init_thumb(struct tp_dispatch *tp)
 		return;
 
 	tp->thumb.detect_thumbs = true;
-	tp->thumb.threshold = INT_MAX;
+	tp->thumb.use_pressure = false;
+	tp->thumb.pressure_threshold = INT_MAX;
 
 	/* detect thumbs by pressure in the bottom 15mm, detect thumbs by
 	 * lingering in the bottom 8mm */
@@ -3093,20 +3324,33 @@ tp_init_thumb(struct tp_dispatch *tp)
 	edges = evdev_device_mm_to_units(device, &mm);
 	tp->thumb.lower_thumb_line = edges.y;
 
-	abs = libevdev_get_abs_info(device->evdev, ABS_MT_PRESSURE);
-	if (!abs)
-		goto out;
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
 
-	threshold = tp_read_thumb_pressure_prop(tp, device);
-	if (threshold == 0)
-		goto out;
+	if (libevdev_has_event_code(device->evdev, EV_ABS, ABS_MT_PRESSURE)) {
+		if (quirks_get_uint32(q,
+				      QUIRK_ATTR_THUMB_PRESSURE_THRESHOLD,
+				      &threshold)) {
+			tp->thumb.use_pressure = true;
+			tp->thumb.pressure_threshold = threshold;
+		}
+	}
 
-	tp->thumb.threshold = threshold;
+	if (libevdev_has_event_code(device->evdev, EV_ABS, ABS_MT_TOUCH_MAJOR)) {
+		if (quirks_get_uint32(q,
+				      QUIRK_ATTR_THUMB_SIZE_THRESHOLD,
+				      &threshold)) {
+			tp->thumb.use_size = true;
+			tp->thumb.size_threshold = threshold;
+		}
+	}
 
-out:
+	quirks_unref(q);
+
 	evdev_log_debug(device,
-			"thumb: enabled thumb detection%s\n",
-			tp->thumb.threshold != INT_MAX ? " (+pressure)" : "");
+			"thumb: enabled thumb detection%s%s\n",
+			tp->thumb.use_pressure ? " (+pressure)" : "",
+			tp->thumb.use_size ? " (+size)" : "");
 }
 
 static bool
@@ -3189,7 +3433,7 @@ tp_init_hysteresis(struct tp_dispatch *tp)
 	if (tp->hysteresis.enabled)
 		evdev_log_debug(tp->device,
 				"hysteresis enabled. "
-				"See %stouchpad_jitter.html for details\n",
+				"See %stouchpad-jitter.html for details\n",
 				HTTP_DOC_LINK);
 }
 
@@ -3199,7 +3443,9 @@ tp_init_pressure(struct tp_dispatch *tp,
 {
 	const struct input_absinfo *abs;
 	unsigned int code;
-	const char *prop;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	struct quirk_range r;
 	int hi, lo;
 
 	code = tp->has_mt ? ABS_MT_PRESSURE : ABS_PRESSURE;
@@ -3211,19 +3457,16 @@ tp_init_pressure(struct tp_dispatch *tp,
 	abs = libevdev_get_abs_info(device->evdev, code);
 	assert(abs);
 
-	prop = NULL;
-	if (prop) {
-		if (!parse_range_property(prop, &hi, &lo)) {
-			evdev_log_bug_client(device,
-				     "discarding invalid pressure range '%s'\n",
-				     prop);
-			return;
-		}
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (q && quirks_get_range(q, QUIRK_ATTR_PRESSURE_RANGE, &r)) {
+		hi = r.upper;
+		lo = r.lower;
 
 		if (hi == 0 && lo == 0) {
 			evdev_log_info(device,
 			       "pressure-based touch detection disabled\n");
-			return;
+			goto out;
 		}
 	} else {
 		unsigned int range = abs->maximum - abs->minimum;
@@ -3233,12 +3476,13 @@ tp_init_pressure(struct tp_dispatch *tp,
 		lo = abs->minimum + 0.10 * range;
 	}
 
+
 	if (hi > abs->maximum || hi < abs->minimum ||
 	    lo > abs->maximum || lo < abs->minimum) {
 		evdev_log_bug_libinput(device,
 			       "discarding out-of-bounds pressure range %d:%d\n",
 			       hi, lo);
-		return;
+		goto out;
 	}
 
 	tp->pressure.use_pressure = true;
@@ -3249,14 +3493,19 @@ tp_init_pressure(struct tp_dispatch *tp,
 			"using pressure-based touch detection (%d:%d)\n",
 			lo,
 			hi);
+out:
+	quirks_unref(q);
 }
 
 static bool
 tp_init_touch_size(struct tp_dispatch *tp,
 		   struct evdev_device *device)
 {
-	const char *prop;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	struct quirk_range r;
 	int lo, hi;
+	int rc = false;
 
 	if (!libevdev_has_event_code(device->evdev,
 				     EV_ABS,
@@ -3264,27 +3513,25 @@ tp_init_touch_size(struct tp_dispatch *tp,
 		return false;
 	}
 
-	prop = NULL;
-	if (!prop)
-		return false;
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (q && quirks_get_range(q, QUIRK_ATTR_TOUCH_SIZE_RANGE, &r)) {
+		hi = r.upper;
+		lo = r.lower;
+	} else {
+		goto out;
+	}
 
 	if (libevdev_get_num_slots(device->evdev) < 5) {
 		evdev_log_bug_libinput(device,
 			       "Expected 5+ slots for touch size detection\n");
-		return false;
-	}
-
-	if (!parse_range_property(prop, &hi, &lo)) {
-		evdev_log_bug_client(device,
-				     "discarding invalid touch size range '%s'\n",
-				     prop);
-		return false;
+		goto out;
 	}
 
 	if (hi == 0 && lo == 0) {
 		evdev_log_info(device,
 			       "touch size based touch detection disabled\n");
-		return false;
+		goto out;
 	}
 
 	/* Thresholds apply for both major or minor */
@@ -3296,7 +3543,10 @@ tp_init_touch_size(struct tp_dispatch *tp,
 			"using size-based touch detection (%d:%d)\n",
 			hi, lo);
 
-	return true;
+	rc = true;
+out:
+	quirks_unref(q);
+	return rc;
 }
 
 static int
@@ -3451,7 +3701,7 @@ evdev_mt_touchpad_create(struct evdev_device *device)
 	struct tp_dispatch *tp;
 	bool want_left_handed = true;
 
-	evdev_tag_touchpad(device);
+	evdev_tag_touchpad(device, device->udev_device);
 
 	tp = zalloc(sizeof *tp);
 

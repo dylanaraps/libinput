@@ -55,6 +55,7 @@ struct point {
 };
 
 struct window {
+	bool grab;
 	struct tools_options options;
 
 	GtkWidget *win;
@@ -63,6 +64,11 @@ struct window {
 
 	/* sprite position */
 	double x, y;
+
+	/* these are for the delta coordinates, but they're not
+	 * deltas, they are converted into abs positions */
+	size_t ndeltas;
+	struct point deltas[64];
 
 	/* abs position */
 	int absx, absy;
@@ -268,6 +274,26 @@ draw_tablet(struct window *w, cairo_t *cr)
 	cairo_fill(cr);
 	cairo_restore(cr);
 
+	/* pointer deltas */
+	mask = ARRAY_LENGTH(w->deltas);
+	first = max(w->ndeltas + 1, mask) - mask;
+	last = w->ndeltas;
+
+	cairo_save(cr);
+	cairo_set_source_rgb(cr, .8, .5, .2);
+
+	x = w->deltas[first % mask].x;
+	y = w->deltas[first % mask].y;
+	cairo_move_to(cr, x, y);
+
+	for (i = first + 1; i < last; i++) {
+		x = w->deltas[i % mask].x;
+		y = w->deltas[i % mask].y;
+		cairo_line_to(cr, x, y);
+	}
+
+	cairo_stroke(cr);
+
 	/* tablet deltas */
 	mask = ARRAY_LENGTH(w->tool.deltas);
 	first = max(w->tool.ndeltas + 1, mask) - mask;
@@ -430,8 +456,6 @@ map_event_cb(GtkWidget *widget, GdkEvent *event, gpointer data)
 static void
 window_init(struct window *w)
 {
-	memset(w, 0, sizeof(*w));
-
 	w->win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_widget_set_events(w->win, 0);
 	gtk_window_set_title(GTK_WINDOW(w->win), "libinput debugging tool");
@@ -541,11 +565,22 @@ handle_event_motion(struct libinput_event *ev, struct window *w)
 	struct libinput_event_pointer *p = libinput_event_get_pointer_event(ev);
 	double dx = libinput_event_pointer_get_dx(p),
 	       dy = libinput_event_pointer_get_dy(p);
+	struct point point;
+	const int mask = ARRAY_LENGTH(w->deltas);
+	size_t idx;
 
 	w->x += dx;
 	w->y += dy;
 	w->x = clip(w->x, 0.0, w->width);
 	w->y = clip(w->y, 0.0, w->height);
+
+	idx = w->ndeltas % mask;
+	point = w->deltas[idx];
+	idx = (w->ndeltas + 1) % mask;
+	point.x += libinput_event_pointer_get_dx_unaccelerated(p);
+	point.y += libinput_event_pointer_get_dy_unaccelerated(p);
+	w->deltas[idx] = point;
+	w->ndeltas++;
 }
 
 static void
@@ -886,12 +921,11 @@ usage(void) {
 int
 main(int argc, char **argv)
 {
-	struct window w;
+	struct window w = {0};
 	struct tools_options options;
 	struct libinput *li;
 	enum tools_backend backend = BACKEND_UDEV;
 	const char *seat_or_device = "seat0";
-	bool grab = false;
 	bool verbose = false;
 
 	gtk_init(&argc, &argv);
@@ -938,7 +972,7 @@ main(int argc, char **argv)
 			seat_or_device = optarg;
 			break;
 		case OPT_GRAB:
-			grab = true;
+			w.grab = true;
 			break;
 		case OPT_VERBOSE:
 			verbose = true;
@@ -958,7 +992,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	li = tools_open_backend(backend, seat_or_device, verbose, &grab);
+	li = tools_open_backend(backend, seat_or_device, verbose, &w.grab);
 	if (!li)
 		return 1;
 

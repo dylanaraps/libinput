@@ -108,21 +108,22 @@ struct motion_filter *
 create_pointer_accelerator_filter_flat(int dpi);
 
 struct motion_filter *
-create_pointer_accelerator_filter_linear(int dpi);
+create_pointer_accelerator_filter_linear(int dpi, bool use_velocity_averaging);
 
 struct motion_filter *
-create_pointer_accelerator_filter_linear_low_dpi(int dpi);
+create_pointer_accelerator_filter_linear_low_dpi(int dpi, bool use_velocity_averaging);
 
 struct motion_filter *
 create_pointer_accelerator_filter_touchpad(int dpi,
 	uint64_t event_delta_smooth_threshold,
-	uint64_t event_delta_smooth_value);
+	uint64_t event_delta_smooth_value,
+	bool use_velocity_averaging);
 
 struct motion_filter *
-create_pointer_accelerator_filter_lenovo_x230(int dpi);
+create_pointer_accelerator_filter_lenovo_x230(int dpi, bool use_velocity_averaging);
 
 struct motion_filter *
-create_pointer_accelerator_filter_trackpoint(int max_delta);
+create_pointer_accelerator_filter_trackpoint(double multiplier, bool use_velocity_averaging);
 
 struct motion_filter *
 create_pointer_accelerator_filter_tablet(int xres, int yres);
@@ -154,5 +155,6 @@ touchpad_lenovo_x230_accel_profile(struct motion_filter *filter,
 double
 trackpoint_accel_profile(struct motion_filter *filter,
 			 void *data,
-			 double delta);
+			 double delta,
+			 uint64_t time);
 #endif /* FILTER_H */

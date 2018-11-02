@@ -2,25 +2,27 @@
  * Copyright © 2014 Red Hat, Inc.
  * Copyright © 2014 Lyude Paul
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 #include "config.h"
+#include "libinput-version.h"
 #include "evdev-tablet.h"
 
 #include <assert.h>
@@ -434,13 +436,22 @@ tablet_tool_process_delta(struct tablet_dispatch *tablet,
 	struct device_coords delta = { 0, 0 };
 	struct device_float_coords accel;
 
+	/* When tool contact changes, we probably got a cursor jump. Don't
+	   try to calculate a delta for that event */
 	if (!tablet_has_status(tablet,
 			       TABLET_TOOL_ENTERING_PROXIMITY) &&
+	    !tablet_has_status(tablet, TABLET_TOOL_ENTERING_CONTACT) &&
+	    !tablet_has_status(tablet, TABLET_TOOL_LEAVING_CONTACT) &&
 	    (bit_is_set(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_X) ||
 	     bit_is_set(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_Y))) {
 		delta.x = axes->point.x - tablet->last_smooth_point.x;
 		delta.y = axes->point.y - tablet->last_smooth_point.y;
 	}
+
+	if (axes->point.x != tablet->last_smooth_point.x)
+		set_bit(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_X);
+	if (axes->point.y != tablet->last_smooth_point.y)
+		set_bit(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_Y);
 
 	tablet->last_smooth_point = axes->point;
 
@@ -656,6 +667,14 @@ tablet_check_notify_axes(struct tablet_dispatch *tablet,
 	rc = true;
 
 out:
+	/* The tool position often jumps to a different spot when contact changes.
+	 * If tool contact changes, clear the history to prevent axis smoothing
+	 * from trying to average over the spatial discontinuity. */
+	if (tablet_has_status(tablet, TABLET_TOOL_ENTERING_CONTACT) ||
+	    tablet_has_status(tablet, TABLET_TOOL_LEAVING_CONTACT)) {
+		tablet_history_reset(tablet);
+	}
+
 	tablet_history_push(tablet, &tablet->axes);
 	tablet_smoothen_axes(tablet, &axes);
 
@@ -2011,7 +2030,7 @@ tablet_init_left_handed(struct evdev_device *device)
 					   tablet_change_to_left_handed);
 }
 
-static int
+static bool
 tablet_reject_device(struct evdev_device *device)
 {
 	struct libevdev *evdev = device->evdev;
@@ -2025,7 +2044,7 @@ tablet_reject_device(struct evdev_device *device)
 	has_size = evdev_device_get_size(device, &w, &h) == 0;
 
 	if (has_xy && (has_pen || has_btn_stylus) && has_size)
-		return 0;
+		return false;
 
 	evdev_log_bug_libinput(device,
 			       "missing tablet capabilities:%s%s%s%s. "
@@ -2034,7 +2053,7 @@ tablet_reject_device(struct evdev_device *device)
 			       has_pen ? "" : " pen",
 			       has_btn_stylus ? "" : " btn-stylus",
 			       has_size ? "" : " resolution");
-	return -1;
+	return true;
 }
 
 static int
@@ -2086,7 +2105,8 @@ tablet_init(struct tablet_dispatch *tablet,
 
 	tablet_set_status(tablet, TABLET_TOOL_OUT_OF_PROXIMITY);
 
-	if (device->model_flags & EVDEV_MODEL_TABLET_NO_PROXIMITY_OUT)
+	if (evdev_device_has_model_quirk(device,
+					 QUIRK_MODEL_TABLET_NO_PROXIMITY_OUT))
 		want_proximity_quirk = true;
 
 	if (want_proximity_quirk)

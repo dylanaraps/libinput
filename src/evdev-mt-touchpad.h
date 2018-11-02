@@ -42,6 +42,7 @@ enum touchpad_event {
 	TOUCHPAD_EVENT_BUTTON_PRESS	= (1 << 1),
 	TOUCHPAD_EVENT_BUTTON_RELEASE	= (1 << 2),
 	TOUCHPAD_EVENT_OTHERAXIS	= (1 << 3),
+	TOUCHPAD_EVENT_TIMESTAMP	= (1 << 4),
 };
 
 enum touch_state {
@@ -143,6 +144,12 @@ enum tp_thumb_state {
 	THUMB_STATE_MAYBE,
 };
 
+enum tp_jump_state {
+	JUMP_STATE_IGNORE = 0,
+	JUMP_STATE_EXPECT_FIRST,
+	JUMP_STATE_EXPECT_DELAY,
+};
+
 struct tp_touch {
 	struct tp_dispatch *tp;
 	unsigned int index;
@@ -150,7 +157,6 @@ struct tp_touch {
 	bool has_ended;				/* TRACKING_ID == -1 */
 	bool dirty;
 	struct device_coords point;
-	struct device_coords last_point;
 	uint64_t time;
 	int pressure;
 	bool is_tool_palm; /* MT_TOOL_PALM */
@@ -178,6 +184,10 @@ struct tp_touch {
 	} history;
 
 	struct {
+		double last_delta_mm;
+	} jumps;
+
+	struct {
 		struct device_coords center;
 		uint8_t x_motion_history;
 	} hysteresis;
@@ -195,8 +205,11 @@ struct tp_touch {
 	struct {
 		enum button_state state;
 		/* We use button_event here so we can use == on events */
-		enum button_event curr;
+		enum button_event current;
 		struct libinput_timer timer;
+		struct device_coords initial;
+		bool has_moved; /* has moved more than threshold */
+		uint64_t initial_time;
 	} button;
 
 	struct {
@@ -359,6 +372,14 @@ struct tp_dispatch {
 		enum libinput_config_scroll_method method;
 		int32_t right_edge;		/* in device coordinates */
 		int32_t bottom_edge;		/* in device coordinates */
+		struct {
+			bool h, v;
+		} active;
+		struct phys_coords vector;
+		uint64_t time_prev;
+		struct {
+			uint64_t h, v;
+		} duration;
 	} scroll;
 
 	enum touchpad_event queued;
@@ -428,9 +449,14 @@ struct tp_dispatch {
 
 	struct {
 		bool detect_thumbs;
-		int threshold;
 		int upper_thumb_line;
 		int lower_thumb_line;
+
+		bool use_pressure;
+		int pressure_threshold;
+
+		bool use_size;
+		int size_threshold;
 	} thumb;
 
 	struct {
@@ -442,6 +468,12 @@ struct tp_dispatch {
 		 * event with the jump.
 		 */
 		unsigned int nonmotion_event_count;
+
+		struct msc_timestamp {
+			enum tp_jump_state state;
+			uint32_t interval;
+			uint32_t now;
+		} msc_timestamp;
 	} quirks;
 
 	struct {

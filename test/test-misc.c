@@ -33,6 +33,8 @@
 
 #include "litest.h"
 #include "libinput-util.h"
+#define  TEST_VERSIONSORT
+#include "libinput-versionsort.h"
 
 static int open_restricted(const char *path, int flags, void *data)
 {
@@ -701,7 +703,7 @@ START_TEST(ratelimit_helpers)
 	unsigned int i, j;
 
 	/* 10 attempts every 100ms */
-	ratelimit_init(&rl, ms2us(100), 10);
+	ratelimit_init(&rl, ms2us(500), 10);
 
 	for (j = 0; j < 3; ++j) {
 		/* a burst of 9 attempts must succeed */
@@ -723,14 +725,14 @@ START_TEST(ratelimit_helpers)
 		}
 
 		/* ..even after waiting 20ms */
-		msleep(20);
+		msleep(100);
 		for (i = 0; i < 100; ++i) {
 			ck_assert_int_eq(ratelimit_test(&rl),
 					 RATELIMIT_EXCEEDED);
 		}
 
-		/* but after 100ms the counter is reset */
-		msleep(90); /* +10ms to account for time drifts */
+		/* but after 500ms the counter is reset */
+		msleep(450); /* +50ms to account for time drifts */
 	}
 }
 END_TEST
@@ -836,49 +838,18 @@ START_TEST(wheel_click_count_parser)
 }
 END_TEST
 
-struct parser_test_float {
-	char *tag;
-	double expected_value;
-};
-
-START_TEST(trackpoint_accel_parser)
-{
-	struct parser_test_float tests[] = {
-		{ "0.5", 0.5 },
-		{ "1.0", 1.0 },
-		{ "2.0", 2.0 },
-		{ "fail1.0", 0.0 },
-		{ "1.0fail", 0.0 },
-		{ "0,5", 0.0 },
-		{ NULL, 0.0 }
-	};
-	int i;
-	double accel;
-
-	for (i = 0; tests[i].tag != NULL; i++) {
-		accel = parse_trackpoint_accel_property(tests[i].tag);
-		ck_assert(accel == tests[i].expected_value);
-	}
-
-	accel = parse_trackpoint_accel_property(NULL);
-	ck_assert_double_eq(accel, 0.0);
-}
-END_TEST
-
-struct parser_test_dimension {
-	char *tag;
-	bool success;
-	int x, y;
-};
-
 START_TEST(dimension_prop_parser)
 {
-	struct parser_test_dimension tests[] = {
+	struct parser_test_dimension {
+		char *tag;
+		bool success;
+		int x, y;
+	} tests[] = {
 		{ "10x10", true, 10, 10 },
 		{ "1x20", true, 1, 20 },
 		{ "1x8000", true, 1, 8000 },
 		{ "238492x428210", true, 238492, 428210 },
-		{ "0x0", true, 0, 0 },
+		{ "0x0", false, 0, 0 },
 		{ "-10x10", false, 0, 0 },
 		{ "-1", false, 0, 0 },
 		{ "1x-99", false, 0, 0 },
@@ -888,7 +859,7 @@ START_TEST(dimension_prop_parser)
 		{ "abd", false, 0, 0 },
 		{ "xabd", false, 0, 0 },
 		{ "0xaf", false, 0, 0 },
-		{ "0x0x", true, 0, 0 },
+		{ "0x0x", false, 0, 0 },
 		{ "x10", false, 0, 0 },
 		{ NULL, false, 0, 0 }
 	};
@@ -914,15 +885,13 @@ START_TEST(dimension_prop_parser)
 }
 END_TEST
 
-struct parser_test_reliability {
-	char *tag;
-	bool success;
-	enum switch_reliability reliability;
-};
-
 START_TEST(reliability_prop_parser)
 {
-	struct parser_test_reliability tests[] = {
+	struct parser_test_reliability {
+		char *tag;
+		bool success;
+		enum switch_reliability reliability;
+	} tests[] = {
 		{ "reliable", true, RELIABILITY_RELIABLE },
 		{ "unreliable", false, 0 },
 		{ "", false, 0 },
@@ -953,17 +922,15 @@ START_TEST(reliability_prop_parser)
 }
 END_TEST
 
-struct parser_test_calibration {
-	char *prop;
-	bool success;
-	float values[6];
-};
-
 START_TEST(calibration_prop_parser)
 {
 #define DEFAULT_VALUES { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 }
 	const float untouched[6] = DEFAULT_VALUES;
-	struct parser_test_calibration tests[] = {
+	struct parser_test_calibration {
+		char *prop;
+		bool success;
+		float values[6];
+	} tests[] = {
 		{ "", false, DEFAULT_VALUES },
 		{ "banana", false, DEFAULT_VALUES },
 		{ "1 2 3 a 5 6", false, DEFAULT_VALUES },
@@ -972,8 +939,7 @@ START_TEST(calibration_prop_parser)
 		{ "1 2 3 4 5 6", true, DEFAULT_VALUES },
 		{ "6.00012 3.244 4.238 5.2421 6.0134 8.860", true,
 			{ 6.00012, 3.244, 4.238, 5.2421, 6.0134, 8.860 }},
-		{ "0xff 2 3 4 5 6", true,
-			{ 255, 2, 3, 4, 5, 6 }},
+		{ "0xff 2 3 4 5 6", false, DEFAULT_VALUES },
 		{ NULL, false, DEFAULT_VALUES }
 	};
 	bool success;
@@ -1007,15 +973,13 @@ START_TEST(calibration_prop_parser)
 }
 END_TEST
 
-struct parser_test_range {
-	char *tag;
-	bool success;
-	int hi, lo;
-};
-
 START_TEST(range_prop_parser)
 {
-	struct parser_test_range tests[] = {
+	struct parser_test_range {
+		char *tag;
+		bool success;
+		int hi, lo;
+	} tests[] = {
 		{ "10:8", true, 10, 8 },
 		{ "100:-1", true, 100, -1 },
 		{ "-203813:-502023", true, -203813, -502023 },
@@ -1046,33 +1010,6 @@ START_TEST(range_prop_parser)
 
 	success = parse_range_property(NULL, NULL, NULL);
 	ck_assert(success == false);
-}
-END_TEST
-
-START_TEST(palm_pressure_parser)
-{
-	struct parser_test tests[] = {
-		{ "1", 1 },
-		{ "10", 10 },
-		{ "255", 255 },
-		{ "360", 360 },
-
-		{ "-12", 0 },
-		{ "0", 0 },
-		{ "-0", 0 },
-		{ "a", 0 },
-		{ "10a", 0 },
-		{ "10-", 0 },
-		{ "sadfasfd", 0 },
-		{ NULL, 0 }
-	};
-
-	int i, angle;
-
-	for (i = 0; tests[i].tag != NULL; i++) {
-		angle = parse_palm_pressure_property(tests[i].tag);
-		ck_assert_int_eq(angle, tests[i].expected_value);
-	}
 }
 END_TEST
 
@@ -1198,24 +1135,133 @@ START_TEST(safe_atoi_base_8_test)
 }
 END_TEST
 
-struct atod_test {
+struct atou_test {
 	char *str;
 	bool success;
-	double val;
+	unsigned int val;
 };
+
+START_TEST(safe_atou_test)
+{
+	struct atou_test tests[] = {
+		{ "10", true, 10 },
+		{ "20", true, 20 },
+		{ "-1", false, 0 },
+		{ "2147483647", true, 2147483647 },
+		{ "-2147483648", false, 0},
+		{ "0x0", false, 0 },
+		{ "-10x10", false, 0 },
+		{ "1x-99", false, 0 },
+		{ "", false, 0 },
+		{ "abd", false, 0 },
+		{ "xabd", false, 0 },
+		{ "0xaf", false, 0 },
+		{ "0x0x", false, 0 },
+		{ "x10", false, 0 },
+		{ NULL, false, 0 }
+	};
+	unsigned int v;
+	bool success;
+
+	for (int i = 0; tests[i].str != NULL; i++) {
+		v = 0xad;
+		success = safe_atou(tests[i].str, &v);
+		ck_assert(success == tests[i].success);
+		if (success)
+			ck_assert_int_eq(v, tests[i].val);
+		else
+			ck_assert_int_eq(v, 0xad);
+	}
+}
+END_TEST
+
+START_TEST(safe_atou_base_16_test)
+{
+	struct atou_test tests[] = {
+		{ "10", true, 0x10 },
+		{ "20", true, 0x20 },
+		{ "-1", false, 0 },
+		{ "0x10", true, 0x10 },
+		{ "0xff", true, 0xff },
+		{ "abc", true, 0xabc },
+		{ "-10", false, 0 },
+		{ "0x0", true, 0 },
+		{ "0", true, 0 },
+		{ "0x-99", false, 0 },
+		{ "0xak", false, 0 },
+		{ "0x", false, 0 },
+		{ "x10", false, 0 },
+		{ NULL, false, 0 }
+	};
+
+	unsigned int v;
+	bool success;
+
+	for (int i = 0; tests[i].str != NULL; i++) {
+		v = 0xad;
+		success = safe_atou_base(tests[i].str, &v, 16);
+		ck_assert(success == tests[i].success);
+		if (success)
+			ck_assert_int_eq(v, tests[i].val);
+		else
+			ck_assert_int_eq(v, 0xad);
+	}
+}
+END_TEST
+
+START_TEST(safe_atou_base_8_test)
+{
+	struct atou_test tests[] = {
+		{ "7", true, 07 },
+		{ "10", true, 010 },
+		{ "20", true, 020 },
+		{ "-1", false, 0 },
+		{ "010", true, 010 },
+		{ "0ff", false, 0 },
+		{ "abc", false, 0},
+		{ "0xabc", false, 0},
+		{ "-10", false, 0 },
+		{ "0", true, 0 },
+		{ "00", true, 0 },
+		{ "0x0", false, 0 },
+		{ "0x-99", false, 0 },
+		{ "0xak", false, 0 },
+		{ "0x", false, 0 },
+		{ "x10", false, 0 },
+		{ NULL, false, 0 }
+	};
+
+	unsigned int v;
+	bool success;
+
+	for (int i = 0; tests[i].str != NULL; i++) {
+		v = 0xad;
+		success = safe_atou_base(tests[i].str, &v, 8);
+		ck_assert(success == tests[i].success);
+		if (success)
+			ck_assert_int_eq(v, tests[i].val);
+		else
+			ck_assert_int_eq(v, 0xad);
+	}
+}
+END_TEST
 
 START_TEST(safe_atod_test)
 {
-	struct atod_test tests[] = {
+	struct atod_test {
+		char *str;
+		bool success;
+		double val;
+	} tests[] = {
 		{ "10", true, 10 },
 		{ "20", true, 20 },
 		{ "-1", true, -1 },
 		{ "2147483647", true, 2147483647 },
 		{ "-2147483648", true, -2147483648 },
 		{ "4294967295", true, 4294967295 },
-		{ "0x0", true, 0 },
-		{ "0x10", true, 0x10 },
-		{ "0xaf", true, 0xaf },
+		{ "0x0", false, 0 },
+		{ "0x10", false, 0 },
+		{ "0xaf", false, 0 },
 		{ "x80", false, 0 },
 		{ "0.0", true, 0.0 },
 		{ "0.1", true, 0.1 },
@@ -1247,15 +1293,13 @@ START_TEST(safe_atod_test)
 }
 END_TEST
 
-struct strsplit_test {
-	const char *string;
-	const char *delim;
-	const char *results[10];
-};
-
 START_TEST(strsplit_test)
 {
-	struct strsplit_test tests[] = {
+	struct strsplit_test {
+		const char *string;
+		const char *delim;
+		const char *results[10];
+	} tests[] = {
 		{ "one two three", " ", { "one", "two", "three", NULL } },
 		{ "one", " ", { "one", NULL } },
 		{ "one two ", " ", { "one", "two", NULL } },
@@ -1291,20 +1335,18 @@ START_TEST(strsplit_test)
 }
 END_TEST
 
-struct kvsplit_dbl_test {
-	const char *string;
-	const char *psep;
-	const char *kvsep;
-	ssize_t nresults;
-	struct {
-		double a;
-		double b;
-	} results[32];
-};
-
 START_TEST(kvsplit_double_test)
 {
-	struct kvsplit_dbl_test tests[] = {
+	struct kvsplit_dbl_test {
+		const char *string;
+		const char *psep;
+		const char *kvsep;
+		ssize_t nresults;
+		struct {
+			double a;
+			double b;
+		} results[32];
+	} tests[] = {
 		{ "1:2;3:4;5:6", ";", ":", 3, { {1, 2}, {3, 4}, {5, 6}}},
 		{ "1.0x2.3 -3.2x4.5 8.090909x-6.00", " ", "x", 3, { {1.0, 2.3}, {-3.2, 4.5}, {8.090909, -6}}},
 
@@ -1343,15 +1385,13 @@ START_TEST(kvsplit_double_test)
 }
 END_TEST
 
-struct strjoin_test {
-	char *strv[10];
-	const char *joiner;
-	const char *result;
-};
-
 START_TEST(strjoin_test)
 {
-	struct strjoin_test tests[] = {
+	struct strjoin_test {
+		char *strv[10];
+		const char *joiner;
+		const char *result;
+	} tests[] = {
 		{ { "one", "two", "three", NULL }, " ", "one two three" },
 		{ { "one", NULL }, "x", "one" },
 		{ { "one", "two", NULL }, "x", "onextwo" },
@@ -1366,6 +1406,7 @@ START_TEST(strjoin_test)
 		{ { NULL }, NULL, NULL }
 	};
 	struct strjoin_test *t = tests;
+	struct strjoin_test nulltest = { {NULL}, "x", NULL };
 
 	while (t->strv[0]) {
 		char *str;
@@ -1377,6 +1418,8 @@ START_TEST(strjoin_test)
 		free(str);
 		t++;
 	}
+
+	ck_assert(strv_join(nulltest.strv, "x") == NULL);
 }
 END_TEST
 
@@ -1580,6 +1623,82 @@ START_TEST(timer_flush)
 }
 END_TEST
 
+START_TEST(list_test_insert)
+{
+	struct list_test {
+		int val;
+		struct list node;
+	} tests[] = {
+		{ .val  = 1 },
+		{ .val  = 2 },
+		{ .val  = 3 },
+		{ .val  = 4 },
+	};
+	struct list_test *t;
+	struct list head;
+	int val;
+
+	list_init(&head);
+
+	ARRAY_FOR_EACH(tests, t) {
+		list_insert(&head, &t->node);
+	}
+
+	val = 4;
+	list_for_each(t, &head, node) {
+		ck_assert_int_eq(t->val, val);
+		val--;
+	}
+
+	ck_assert_int_eq(val, 0);
+}
+END_TEST
+
+START_TEST(list_test_append)
+{
+	struct list_test {
+		int val;
+		struct list node;
+	} tests[] = {
+		{ .val  = 1 },
+		{ .val  = 2 },
+		{ .val  = 3 },
+		{ .val  = 4 },
+	};
+	struct list_test *t;
+	struct list head;
+	int val;
+
+	list_init(&head);
+
+	ARRAY_FOR_EACH(tests, t) {
+		list_append(&head, &t->node);
+	}
+
+	val = 1;
+	list_for_each(t, &head, node) {
+		ck_assert_int_eq(t->val, val);
+		val++;
+	}
+	ck_assert_int_eq(val, 5);
+}
+END_TEST
+
+START_TEST(strverscmp_test)
+{
+	ck_assert_int_eq(libinput_strverscmp("", ""), 0);
+	ck_assert_int_gt(libinput_strverscmp("0.0.1", ""), 0);
+	ck_assert_int_lt(libinput_strverscmp("", "0.0.1"), 0);
+	ck_assert_int_eq(libinput_strverscmp("0.0.1", "0.0.1"), 0);
+	ck_assert_int_eq(libinput_strverscmp("0.0.1", "0.0.2"), -1);
+	ck_assert_int_eq(libinput_strverscmp("0.0.2", "0.0.1"), 1);
+	ck_assert_int_eq(libinput_strverscmp("0.0.1", "0.1.0"), -1);
+	ck_assert_int_eq(libinput_strverscmp("0.1.0", "0.0.1"), 1);
+}
+END_TEST
+
+
+
 TEST_COLLECTION(misc)
 {
 	litest_add_no_device("events:conversion", event_conversion_device_notify);
@@ -1592,35 +1711,40 @@ TEST_COLLECTION(misc)
 	litest_add_for_device("events:conversion", event_conversion_tablet, LITEST_WACOM_CINTIQ);
 	litest_add_for_device("events:conversion", event_conversion_tablet_pad, LITEST_WACOM_INTUOS5_PAD);
 	litest_add_for_device("events:conversion", event_conversion_switch, LITEST_LID_SWITCH);
-	litest_add_no_device("misc:bitfield_helpers", bitfield_helpers);
+	litest_add_deviceless("misc:bitfield_helpers", bitfield_helpers);
 
-	litest_add_no_device("context:refcount", context_ref_counting);
-	litest_add_no_device("config:status string", config_status_string);
+	litest_add_deviceless("context:refcount", context_ref_counting);
+	litest_add_deviceless("config:status string", config_status_string);
 
 	litest_add_for_device("timer:offset-warning", timer_offset_bug_warning, LITEST_SYNAPTICS_TOUCHPAD);
 	litest_add_no_device("timer:flush", timer_flush);
 
-	litest_add_no_device("misc:matrix", matrix_helpers);
-	litest_add_no_device("misc:ratelimit", ratelimit_helpers);
-	litest_add_no_device("misc:parser", dpi_parser);
-	litest_add_no_device("misc:parser", wheel_click_parser);
-	litest_add_no_device("misc:parser", wheel_click_count_parser);
-	litest_add_no_device("misc:parser", trackpoint_accel_parser);
-	litest_add_no_device("misc:parser", dimension_prop_parser);
-	litest_add_no_device("misc:parser", reliability_prop_parser);
-	litest_add_no_device("misc:parser", calibration_prop_parser);
-	litest_add_no_device("misc:parser", range_prop_parser);
-	litest_add_no_device("misc:parser", palm_pressure_parser);
-	litest_add_no_device("misc:parser", safe_atoi_test);
-	litest_add_no_device("misc:parser", safe_atoi_base_16_test);
-	litest_add_no_device("misc:parser", safe_atoi_base_8_test);
-	litest_add_no_device("misc:parser", safe_atod_test);
-	litest_add_no_device("misc:parser", strsplit_test);
-	litest_add_no_device("misc:parser", kvsplit_double_test);
-	litest_add_no_device("misc:parser", strjoin_test);
-	litest_add_no_device("misc:time", time_conversion);
+	litest_add_deviceless("misc:matrix", matrix_helpers);
+	litest_add_deviceless("misc:ratelimit", ratelimit_helpers);
+	litest_add_deviceless("misc:parser", dpi_parser);
+	litest_add_deviceless("misc:parser", wheel_click_parser);
+	litest_add_deviceless("misc:parser", wheel_click_count_parser);
+	litest_add_deviceless("misc:parser", dimension_prop_parser);
+	litest_add_deviceless("misc:parser", reliability_prop_parser);
+	litest_add_deviceless("misc:parser", calibration_prop_parser);
+	litest_add_deviceless("misc:parser", range_prop_parser);
+	litest_add_deviceless("misc:parser", safe_atoi_test);
+	litest_add_deviceless("misc:parser", safe_atoi_base_16_test);
+	litest_add_deviceless("misc:parser", safe_atoi_base_8_test);
+	litest_add_deviceless("misc:parser", safe_atou_test);
+	litest_add_deviceless("misc:parser", safe_atou_base_16_test);
+	litest_add_deviceless("misc:parser", safe_atou_base_8_test);
+	litest_add_deviceless("misc:parser", safe_atod_test);
+	litest_add_deviceless("misc:parser", strsplit_test);
+	litest_add_deviceless("misc:parser", kvsplit_double_test);
+	litest_add_deviceless("misc:parser", strjoin_test);
+	litest_add_deviceless("misc:time", time_conversion);
 
 	litest_add_no_device("misc:fd", fd_no_event_leak);
 
-	litest_add_no_device("misc:library_version", library_version);
+	litest_add_deviceless("misc:library_version", library_version);
+
+	litest_add_deviceless("misc:list", list_test_insert);
+	litest_add_deviceless("misc:list", list_test_append);
+	litest_add_deviceless("misc:versionsort", strverscmp_test);
 }

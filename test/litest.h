@@ -35,6 +35,7 @@
 #include <math.h>
 
 #include "libinput-util.h"
+#include "quirks.h"
 
 struct test_device {
 	const char *name;
@@ -287,9 +288,11 @@ enum litest_device_type {
 	LITEST_MS_NANO_TRANSCEIVER_MOUSE,
 	LITEST_AIPTEK,
 	LITEST_TOUCHSCREEN_INVALID_RANGE,
+	LITEST_TOUCHSCREEN_MT_TOOL_TYPE,
 };
 
 enum litest_device_feature {
+	LITEST_DEVICELESS = -2,
 	LITEST_DISABLE_DEVICE = -1,
 	LITEST_ANY = 0,
 	LITEST_TOUCHPAD = 1 << 0,
@@ -345,6 +348,7 @@ struct litest_device {
 	struct libevdev *evdev;
 	struct libevdev_uinput *uinput;
 	struct libinput *libinput;
+	struct quirks *quirks;
 	bool owns_context;
 	struct libinput_device *libinput_device;
 	struct litest_device_interface *interface;
@@ -415,6 +419,9 @@ void litest_set_log_handler_bug(struct libinput *libinput);
 	_litest_add_no_device(name_, #func_, func_)
 #define litest_add_ranged_no_device(name_, func_, ...) \
 	_litest_add_ranged_no_device(name_, #func_, func_, __VA_ARGS__)
+#define litest_add_deviceless(name_, func_) \
+	_litest_add_deviceless(name_, #func_, func_)
+
 void
 _litest_add(const char *name,
 	    const char *funcname,
@@ -448,6 +455,10 @@ _litest_add_ranged_no_device(const char *name,
 			     const char *funcname,
 			     void *func,
 			     const struct range *range);
+void
+_litest_add_deviceless(const char *name,
+		       const char *funcname,
+		       void *func);
 
 struct litest_device *
 litest_create_device(enum litest_device_type which);
@@ -532,7 +543,7 @@ litest_touch_move_to(struct litest_device *d,
 		     unsigned int slot,
 		     double x_from, double y_from,
 		     double x_to, double y_to,
-		     int steps, int sleep_ms);
+		     int steps);
 
 void
 litest_touch_move_to_extended(struct litest_device *d,
@@ -540,14 +551,14 @@ litest_touch_move_to_extended(struct litest_device *d,
 			      double x_from, double y_from,
 			      double x_to, double y_to,
 			      struct axis_replacement *axes,
-			      int steps, int sleep_ms);
+			      int steps);
 
 void
 litest_touch_move_two_touches(struct litest_device *d,
 			      double x0, double y0,
 			      double x1, double y1,
 			      double dx, double dy,
-			      int steps, int sleep_ms);
+			      int steps);
 
 void
 litest_touch_move_three_touches(struct litest_device *d,
@@ -555,7 +566,7 @@ litest_touch_move_three_touches(struct litest_device *d,
 				double x1, double y1,
 				double x2, double y2,
 				double dx, double dy,
-				int steps, int sleep_ms);
+				int steps);
 
 void
 litest_tablet_proximity_in(struct litest_device *d,
@@ -607,14 +618,14 @@ litest_hover_move_to(struct litest_device *d,
 		     unsigned int slot,
 		     double x_from, double y_from,
 		     double x_to, double y_to,
-		     int steps, int sleep_ms);
+		     int steps);
 
 void
 litest_hover_move_two_touches(struct litest_device *d,
 			      double x0, double y0,
 			      double x1, double y1,
 			      double dx, double dy,
-			      int steps, int sleep_ms);
+			      int steps);
 
 void
 litest_button_click_debounced(struct litest_device *d,
@@ -659,6 +670,15 @@ litest_assert_empty_queue(struct libinput *li);
 
 void
 litest_assert_touch_sequence(struct libinput *li);
+
+void
+litest_assert_touch_motion_frame(struct libinput *li);
+void
+litest_assert_touch_down_frame(struct libinput *li);
+void
+litest_assert_touch_up_frame(struct libinput *li);
+void
+litest_assert_touch_cancel(struct libinput *li);
 
 struct libinput_event_pointer *
 litest_is_button_event(struct libinput_event *event,
@@ -800,6 +820,9 @@ void
 litest_timeout_hysteresis(void);
 
 void
+litest_timeout_thumb(void);
+
+void
 litest_push_event_frame(struct litest_device *dev);
 
 void
@@ -938,6 +961,15 @@ litest_has_clickfinger(struct litest_device *dev)
 	return methods & LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
 }
 
+static inline bool
+litest_has_btnareas(struct litest_device *dev)
+{
+	struct libinput_device *device = dev->libinput_device;
+	uint32_t methods = libinput_device_config_click_get_methods(device);
+
+	return methods & LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
+}
+
 static inline void
 litest_enable_clickfinger(struct litest_device *dev)
 {
@@ -1065,6 +1097,15 @@ litest_touchpad_is_external(struct litest_device *dev)
 	udev_device_unref(udev_device);
 
 	return is_external;
+}
+
+static inline int
+litest_send_file(int sock, int fd)
+{
+	char buf[40960];
+	int n = read(fd, buf, 40960);
+	litest_assert_int_gt(n, 0);
+	return write(sock, buf, n);
 }
 
 #undef ck_assert_double_eq
