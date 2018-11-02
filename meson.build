@@ -1,7 +1,7 @@
 project('libinput', 'c', 'cpp',
 	version : '1.12.2',
 	license : 'MIT/Expat',
-	default_options : [ 'c_std=gnu99', 'warning_level=2' ],
+	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
 
 libinput_version = meson.project_version().split('.')
@@ -57,12 +57,7 @@ else
 	config_h.set_quoted('MESON_BUILD_ROOT', '')
 endif
 
-prefix = '''#define _GNU_SOURCE 1
-#include <assert.h>
-'''
-if cc.get_define('static_assert', prefix : prefix) == ''
-	config_h.set('static_assert(...)', '/* */')
-endif
+prefix = '#define _GNU_SOURCE 1'
 
 # Coverity breaks because it doesn't define _Float128 correctly, you'll end
 # up with a bunch of messages in the form:
