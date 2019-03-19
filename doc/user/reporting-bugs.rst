@@ -228,7 +228,7 @@ device capabilities together with the event stream from the kernel. On our
 side, this allows us to recreate a virtual device identical to your device
 and re-play the event sequence, hopefully triggering the same bug.
 
-evemu-record takes a <tt>/dev/input/eventX</tt> event node, but without arguments
+evemu-record takes a ``/dev/input/eventX`` event node, but without arguments
 it will simply show the list of devices and let you select: ::
 
      $ sudo evemu-record > scroll.evemu
@@ -288,7 +288,7 @@ My bug was closed as fixed, what now?
 ------------------------------------------------------------------------------
 
 libinput's policy on closing bugs is: once the fix for a given bug is on git
-master, the bug is considered fixed and the bugzilla entry will be closed
+master, the bug is considered fixed and the gitlab issue will be closed
 accordingly.
 
 Of course, unless you actually run git master, the bug will continue to

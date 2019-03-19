@@ -1,5 +1,5 @@
 project('libinput', 'c', 'cpp',
-	version : '1.12.2',
+	version : '1.12.6',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
@@ -216,7 +216,7 @@ src_libinput_util = [
 ]
 libinput_util = static_library('libinput-util',
 			       src_libinput_util,
-			       dependencies : dep_udev,
+			       dependencies : [dep_udev, dep_libevdev],
 			       include_directories : includes_include)
 dep_libinput_util = declare_dependency(link_with : libinput_util)
 
@@ -250,6 +250,7 @@ quirks_data = [
 	'quirks/10-generic-trackball.quirks',
 	'quirks/30-vendor-aiptek.quirks',
 	'quirks/30-vendor-alps.quirks',
+	'quirks/30-vendor-contour.quirks',
 	'quirks/30-vendor-cyapa.quirks',
 	'quirks/30-vendor-elantech.quirks',
 	'quirks/30-vendor-huion.quirks',
