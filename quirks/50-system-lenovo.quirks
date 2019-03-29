@@ -25,6 +25,11 @@ MatchName=Elan Touchpad
 MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadT480s*
 ModelLenovoT480sTouchpad=1
 
+[Lenovo L380 Touchpad]
+MatchName=Elan Touchpad
+MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadL380*
+ModelLenovoL380Touchpad=1
+
 [Lenovo X200 Trackpoint]
 MatchName=*TPPS/2 IBM TrackPoint
 MatchDMIModalias=dmi:*svnLENOVO:*pvrThinkPadX20?:*
@@ -58,6 +63,18 @@ MatchName=SynPS/2 Synaptics TouchPad
 MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadX1Carbon3rd:*
 ModelLenovoT450Touchpad=1
 AttrPalmPressureThreshold=150
+
+[Lenovo X1 Carbon 4th Trackpoint]
+MatchUdevType=pointingstick
+MatchName=*TPPS/2 IBM TrackPoint*
+MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadX1Carbon4th*
+AttrTrackpointMultiplier=0.5
+
+[Lenovo X1 Carbon 6th Trackpoint]
+MatchUdevType=pointingstick
+MatchName=*TPPS/2 Elan TrackPoint*
+MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadX1Carbon6th*
+AttrTrackpointMultiplier=0.4
 
 [Lenovo ThinkPad Compact USB Keyboard with TrackPoint]
 MatchUdevType=keyboard

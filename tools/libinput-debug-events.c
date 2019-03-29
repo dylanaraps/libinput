@@ -457,6 +457,7 @@ print_pointer_axis_event(struct libinput_event *ev)
 {
 	struct libinput_event_pointer *p = libinput_event_get_pointer_event(ev);
 	double v = 0, h = 0;
+	int dv = 0, dh = 0;
 	const char *have_vert = "",
 		   *have_horiz = "";
 	const char *source = "invalid";
@@ -480,17 +481,21 @@ print_pointer_axis_event(struct libinput_event *ev)
 				LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)) {
 		v = libinput_event_pointer_get_axis_value(p,
 			      LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+		dv = libinput_event_pointer_get_axis_value_discrete(p,
+			      LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
 		have_vert = "*";
 	}
 	if (libinput_event_pointer_has_axis(p,
 				LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL)) {
 		h = libinput_event_pointer_get_axis_value(p,
 			      LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
+		dh = libinput_event_pointer_get_axis_value_discrete(p,
+			      LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
 		have_horiz = "*";
 	}
 	print_event_time(libinput_event_pointer_get_time(p));
-	printq("vert %.2f%s horiz %.2f%s (%s)\n",
-	       v, have_vert, h, have_horiz, source);
+	printq("vert %.2f/%d%s horiz %.2f/%d%s (%s)\n",
+	       v, dv, have_vert, h, dh, have_horiz, source);
 }
 
 static void
@@ -782,10 +787,12 @@ handle_and_print_events(struct libinput *li)
 		case LIBINPUT_EVENT_NONE:
 			abort();
 		case LIBINPUT_EVENT_DEVICE_ADDED:
-		case LIBINPUT_EVENT_DEVICE_REMOVED:
 			print_device_notify(ev);
 			tools_device_apply_config(libinput_event_get_device(ev),
 						  &options);
+			break;
+		case LIBINPUT_EVENT_DEVICE_REMOVED:
+			print_device_notify(ev);
 			break;
 		case LIBINPUT_EVENT_KEYBOARD_KEY:
 			print_key_event(li, ev);
@@ -878,21 +885,10 @@ static void
 mainloop(struct libinput *li)
 {
 	struct pollfd fds;
-	struct sigaction act;
 
 	fds.fd = libinput_get_fd(li);
 	fds.events = POLLIN;
 	fds.revents = 0;
-
-	memset(&act, 0, sizeof(act));
-	act.sa_sigaction = sighandler;
-	act.sa_flags = SA_SIGINFO;
-
-	if (sigaction(SIGINT, &act, NULL) == -1) {
-		fprintf(stderr, "Failed to set up signal handling (%s)\n",
-				strerror(errno));
-		return;
-	}
 
 	/* Handle already-pending device added events */
 	if (handle_and_print_events(li))
@@ -915,10 +911,11 @@ main(int argc, char **argv)
 {
 	struct libinput *li;
 	struct timespec tp;
-	enum tools_backend backend = BACKEND_UDEV;
+	enum tools_backend backend = BACKEND_NONE;
 	const char *seat_or_device = "seat0";
 	bool grab = false;
 	bool verbose = false;
+	struct sigaction act;
 
 	clock_gettime(CLOCK_MONOTONIC, &tp);
 	start_time = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
@@ -954,11 +951,11 @@ main(int argc, char **argv)
 
 		switch(c) {
 		case '?':
-			exit(1);
+			exit(EXIT_INVALID_USAGE);
 			break;
 		case 'h':
 			usage();
-			exit(0);
+			exit(EXIT_SUCCESS);
 			break;
 		case OPT_SHOW_KEYCODES:
 			show_keycodes = true;
@@ -983,7 +980,7 @@ main(int argc, char **argv)
 		default:
 			if (tools_parse_option(c, optarg, &options) != 0) {
 				usage();
-				return 1;
+				return EXIT_INVALID_USAGE;
 			}
 			break;
 		}
@@ -991,17 +988,33 @@ main(int argc, char **argv)
 	}
 
 	if (optind < argc) {
-		usage();
-		return 1;
+		if (optind < argc - 1 || backend != BACKEND_NONE) {
+			usage();
+			return EXIT_INVALID_USAGE;
+		}
+		backend = BACKEND_DEVICE;
+		seat_or_device = argv[optind];
+	} else if (backend == BACKEND_NONE) {
+		backend = BACKEND_UDEV;
+	}
+
+	memset(&act, 0, sizeof(act));
+	act.sa_sigaction = sighandler;
+	act.sa_flags = SA_SIGINFO;
+
+	if (sigaction(SIGINT, &act, NULL) == -1) {
+		fprintf(stderr, "Failed to set up signal handling (%s)\n",
+				strerror(errno));
+		return EXIT_FAILURE;
 	}
 
 	li = tools_open_backend(backend, seat_or_device, verbose, &grab);
 	if (!li)
-		return 1;
+		return EXIT_FAILURE;
 
 	mainloop(li);
 
 	libinput_unref(li);
 
-	return 0;
+	return EXIT_SUCCESS;
 }

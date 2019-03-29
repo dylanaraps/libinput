@@ -83,14 +83,14 @@ struct property {
 };
 
 enum match_flags {
-	M_NAME		= (1 << 0),
-	M_BUS		= (1 << 1),
-	M_VID		= (1 << 2),
-	M_PID		= (1 << 3),
-	M_DMI		= (1 << 4),
-	M_UDEV_TYPE	= (1 << 5),
-	M_DT		= (1 << 6),
-	M_VERSION	= (1 << 7),
+	M_NAME		= bit(0),
+	M_BUS		= bit(1),
+	M_VID		= bit(2),
+	M_PID		= bit(3),
+	M_DMI		= bit(4),
+	M_UDEV_TYPE	= bit(5),
+	M_DT		= bit(6),
+	M_VERSION	= bit(7),
 
 	M_LAST		= M_VERSION,
 };
@@ -105,13 +105,13 @@ enum bustype {
 };
 
 enum udev_type {
-	UDEV_MOUSE		= (1 << 1),
-	UDEV_POINTINGSTICK	= (1 << 2),
-	UDEV_TOUCHPAD		= (1 << 3),
-	UDEV_TABLET		= (1 << 4),
-	UDEV_TABLET_PAD		= (1 << 5),
-	UDEV_JOYSTICK		= (1 << 6),
-	UDEV_KEYBOARD		= (1 << 7),
+	UDEV_MOUSE		= bit(1),
+	UDEV_POINTINGSTICK	= bit(2),
+	UDEV_TOUCHPAD		= bit(3),
+	UDEV_TABLET		= bit(4),
+	UDEV_TABLET_PAD		= bit(5),
+	UDEV_JOYSTICK		= bit(6),
+	UDEV_KEYBOARD		= bit(7),
 };
 
 /**
@@ -238,6 +238,7 @@ quirk_get_name(enum quirk q)
 	case QUIRK_MODEL_HP_PAVILION_DM4_TOUCHPAD:	return "ModelHPPavilionDM4Touchpad";
 	case QUIRK_MODEL_HP_STREAM11_TOUCHPAD:		return "ModelHPStream11Touchpad";
 	case QUIRK_MODEL_HP_ZBOOK_STUDIO_G3:		return "ModelHPZBookStudioG3";
+	case QUIRK_MODEL_LENOVO_L380_TOUCHPAD:		return "ModelLenovoL380Touchpad";
 	case QUIRK_MODEL_LENOVO_SCROLLPOINT:		return "ModelLenovoScrollPoint";
 	case QUIRK_MODEL_LENOVO_T450_TOUCHPAD:		return "ModelLenovoT450Touchpad";
 	case QUIRK_MODEL_LENOVO_T480S_TOUCHPAD:		return "ModelLenovoT480sTouchpad";
@@ -247,6 +248,7 @@ quirk_get_name(enum quirk q)
 	case QUIRK_MODEL_SYSTEM76_GALAGO:		return "ModelSystem76Galago";
 	case QUIRK_MODEL_SYSTEM76_KUDU:			return "ModelSystem76Kudu";
 	case QUIRK_MODEL_TABLET_MODE_NO_SUSPEND:	return "ModelTabletModeNoSuspend";
+	case QUIRK_MODEL_TABLET_MODE_SWITCH_UNRELIABLE:	return "ModelTabletModeSwitchUnreliable";
 	case QUIRK_MODEL_TABLET_NO_PROXIMITY_OUT:	return "ModelTabletNoProximityOut";
 	case QUIRK_MODEL_TABLET_NO_TILT:		return "ModelTabletNoTilt";
 	case QUIRK_MODEL_TOUCHPAD_VISIBLE_MARKER:	return "ModelTouchpadVisibleMarker";
@@ -425,6 +427,15 @@ section_destroy(struct section *s)
 	free(s);
 }
 
+static inline bool
+parse_hex(const char *value, unsigned int *parsed)
+{
+	return strneq(value, "0x", 2) &&
+	       safe_atou_base(value, parsed, 16) &&
+	       strspn(value, "0123456789xABCDEF") == strlen(value) &&
+	       *parsed <= 0xFFFF;
+}
+
 /**
  * Parse a MatchFooBar=banana line.
  *
@@ -470,9 +481,7 @@ parse_match(struct quirks_context *ctx,
 		unsigned int vendor;
 
 		check_set_bit(s, M_VID);
-		if (!strneq(value, "0x", 2) ||
-		    !safe_atou_base(value, &vendor, 16) ||
-		    vendor > 0xFFFF)
+		if (!parse_hex(value, &vendor))
 			goto out;
 
 		s->match.vendor = vendor;
@@ -480,9 +489,7 @@ parse_match(struct quirks_context *ctx,
 		unsigned int product;
 
 		check_set_bit(s, M_PID);
-		if (!strneq(value, "0x", 2) ||
-		    !safe_atou_base(value, &product, 16) ||
-		    product > 0xFFFF)
+		if (!parse_hex(value, &product))
 			goto out;
 
 		s->match.product = product;
@@ -490,9 +497,7 @@ parse_match(struct quirks_context *ctx,
 		unsigned int version;
 
 		check_set_bit(s, M_VERSION);
-		if (!strneq(value, "0x", 2) ||
-		    !safe_atou_base(value, &version, 16) ||
-		    version > 0xFFFF)
+		if (!parse_hex(value, &version))
 			goto out;
 
 		s->match.version = version;

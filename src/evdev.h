@@ -43,37 +43,37 @@
 
 enum evdev_event_type {
 	EVDEV_NONE,
-	EVDEV_ABSOLUTE_TOUCH_DOWN = (1 << 0),
-	EVDEV_ABSOLUTE_MOTION = (1 << 1),
-	EVDEV_ABSOLUTE_TOUCH_UP = (1 << 2),
-	EVDEV_ABSOLUTE_MT = (1 << 3),
-	EVDEV_WHEEL = (1 << 4),
-	EVDEV_KEY = (1 << 5),
-	EVDEV_RELATIVE_MOTION = (1 << 6),
-	EVDEV_BUTTON = (1 << 7),
+	EVDEV_ABSOLUTE_TOUCH_DOWN	= bit(0),
+	EVDEV_ABSOLUTE_MOTION		= bit(1),
+	EVDEV_ABSOLUTE_TOUCH_UP		= bit(2),
+	EVDEV_ABSOLUTE_MT		= bit(3),
+	EVDEV_WHEEL			= bit(4),
+	EVDEV_KEY			= bit(5),
+	EVDEV_RELATIVE_MOTION		= bit(6),
+	EVDEV_BUTTON			= bit(7),
 };
 
 enum evdev_device_seat_capability {
-	EVDEV_DEVICE_POINTER = (1 << 0),
-	EVDEV_DEVICE_KEYBOARD = (1 << 1),
-	EVDEV_DEVICE_TOUCH = (1 << 2),
-	EVDEV_DEVICE_TABLET = (1 << 3),
-	EVDEV_DEVICE_TABLET_PAD = (1 << 4),
-	EVDEV_DEVICE_GESTURE = (1 << 5),
-	EVDEV_DEVICE_SWITCH = (1 << 6),
+	EVDEV_DEVICE_POINTER		= bit(0),
+	EVDEV_DEVICE_KEYBOARD		= bit(1),
+	EVDEV_DEVICE_TOUCH		= bit(2),
+	EVDEV_DEVICE_TABLET		= bit(3),
+	EVDEV_DEVICE_TABLET_PAD		= bit(4),
+	EVDEV_DEVICE_GESTURE		= bit(5),
+	EVDEV_DEVICE_SWITCH		= bit(6),
 };
 
 enum evdev_device_tags {
-	EVDEV_TAG_EXTERNAL_MOUSE = (1 << 0),
-	EVDEV_TAG_INTERNAL_TOUCHPAD = (1 << 1),
-	EVDEV_TAG_EXTERNAL_TOUCHPAD = (1 << 2),
-	EVDEV_TAG_TRACKPOINT = (1 << 3),
-	EVDEV_TAG_KEYBOARD = (1 << 4),
-	EVDEV_TAG_LID_SWITCH = (1 << 5),
-	EVDEV_TAG_INTERNAL_KEYBOARD = (1 << 6),
-	EVDEV_TAG_EXTERNAL_KEYBOARD = (1 << 7),
-	EVDEV_TAG_TABLET_MODE_SWITCH = (1 << 8),
-	EVDEV_TAG_TABLET_TOUCHPAD = (1 << 9),
+	EVDEV_TAG_EXTERNAL_MOUSE	= bit(0),
+	EVDEV_TAG_INTERNAL_TOUCHPAD	= bit(1),
+	EVDEV_TAG_EXTERNAL_TOUCHPAD	= bit(2),
+	EVDEV_TAG_TRACKPOINT		= bit(3),
+	EVDEV_TAG_KEYBOARD		= bit(4),
+	EVDEV_TAG_LID_SWITCH		= bit(5),
+	EVDEV_TAG_INTERNAL_KEYBOARD	= bit(6),
+	EVDEV_TAG_EXTERNAL_KEYBOARD	= bit(7),
+	EVDEV_TAG_TABLET_MODE_SWITCH	= bit(8),
+	EVDEV_TAG_TABLET_TOUCHPAD	= bit(9),
 };
 
 enum evdev_middlebutton_state {
@@ -106,16 +106,16 @@ enum evdev_middlebutton_event {
  */
 enum evdev_device_model {
 	EVDEV_MODEL_DEFAULT = 0,
-	EVDEV_MODEL_WACOM_TOUCHPAD		= (1 << 1),
-	EVDEV_MODEL_SYNAPTICS_SERIAL_TOUCHPAD	= (1 << 2),
-	EVDEV_MODEL_LENOVO_T450_TOUCHPAD	= (1 << 4),
-	EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON	= (1 << 5),
-	EVDEV_MODEL_LENOVO_SCROLLPOINT		= (1 << 6),
+	EVDEV_MODEL_WACOM_TOUCHPAD		= bit(1),
+	EVDEV_MODEL_SYNAPTICS_SERIAL_TOUCHPAD	= bit(2),
+	EVDEV_MODEL_LENOVO_T450_TOUCHPAD	= bit(4),
+	EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON	= bit(5),
+	EVDEV_MODEL_LENOVO_SCROLLPOINT		= bit(6),
 
 	/* udev tags, not true quirks */
-	EVDEV_MODEL_TEST_DEVICE			= (1 << 20),
-	EVDEV_MODEL_TRACKBALL			= (1 << 21),
-	EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81	= (1 << 22),
+	EVDEV_MODEL_TEST_DEVICE			= bit(20),
+	EVDEV_MODEL_TRACKBALL			= bit(21),
+	EVDEV_MODEL_LENOVO_X220_TOUCHPAD_FW81	= bit(22),
 };
 
 enum evdev_button_scroll_state {
@@ -142,6 +142,12 @@ enum evdev_debounce_state {
 	 * Debounce is enabled and we are currently filtering an event
 	 */
 	DEBOUNCE_ACTIVE,
+};
+
+enum evdev_arbitration_state {
+	ARBITRATION_NOT_ACTIVE,
+	ARBITRATION_IGNORE_ALL,
+	ARBITRATION_IGNORE_RECT,
 };
 
 struct evdev_device {
@@ -300,11 +306,22 @@ struct evdev_dispatch_interface {
 			   struct evdev_dispatch *dispatch);
 
 	/* For touch arbitration, called on the device that should
-	 * enable/disable touch capabilities */
-	void (*toggle_touch)(struct evdev_dispatch *dispatch,
-			     struct evdev_device *device,
-			     bool enable,
-			     uint64_t now);
+	 * enable/disable touch capabilities.
+	 */
+	void (*touch_arbitration_toggle)(struct evdev_dispatch *dispatch,
+					 struct evdev_device *device,
+					 enum evdev_arbitration_state which,
+					 const struct phys_rect *rect, /* may be NULL */
+					 uint64_t now);
+
+	/* Called when touch arbitration is on, updates the area where touch
+	 * arbitration should apply.
+	 */
+	void (*touch_arbitration_update_rect)(struct evdev_dispatch *dispatch,
+					      struct evdev_device *device,
+					      const struct phys_rect *rect,
+					      uint64_t now);
+
 
 	/* Return the state of the given switch */
 	enum libinput_switch_state
@@ -706,14 +723,18 @@ evdev_hysteresis(const struct device_coords *in,
 	return result;
 }
 
-LIBINPUT_ATTRIBUTE_PRINTF(3, 0)
+LIBINPUT_ATTRIBUTE_PRINTF(3, 4)
 static inline void
-evdev_log_msg_va(struct evdev_device *device,
-		 enum libinput_log_priority priority,
-		 const char *format,
-		 va_list args)
+evdev_log_msg(struct evdev_device *device,
+	      enum libinput_log_priority priority,
+	      const char *format,
+	      ...)
 {
+	va_list args;
 	char buf[1024];
+
+	if (!is_logged(evdev_libinput_context(device), priority))
+		return;
 
 	/* Anything info and above is user-visible, use the device name */
 	snprintf(buf,
@@ -724,20 +745,8 @@ evdev_log_msg_va(struct evdev_device *device,
 		 (priority > LIBINPUT_LOG_PRIORITY_DEBUG) ?  ": " : "",
 		 format);
 
-	log_msg_va(evdev_libinput_context(device), priority, buf, args);
-}
-
-LIBINPUT_ATTRIBUTE_PRINTF(3, 4)
-static inline void
-evdev_log_msg(struct evdev_device *device,
-	      enum libinput_log_priority priority,
-	      const char *format,
-	      ...)
-{
-	va_list args;
-
 	va_start(args, format);
-	evdev_log_msg_va(device, priority, format, args);
+	log_msg_va(evdev_libinput_context(device), priority, buf, args);
 	va_end(args);
 
 }
@@ -751,14 +760,28 @@ evdev_log_msg_ratelimit(struct evdev_device *device,
 			...)
 {
 	va_list args;
+	char buf[1024];
+
 	enum ratelimit_state state;
+
+	if (!is_logged(evdev_libinput_context(device), priority))
+		return;
 
 	state = ratelimit_test(ratelimit);
 	if (state == RATELIMIT_EXCEEDED)
 		return;
 
+	/* Anything info and above is user-visible, use the device name */
+	snprintf(buf,
+		 sizeof(buf),
+		 "%-7s - %s%s%s",
+		 evdev_device_get_sysname(device),
+		 (priority > LIBINPUT_LOG_PRIORITY_DEBUG) ?  device->devname : "",
+		 (priority > LIBINPUT_LOG_PRIORITY_DEBUG) ?  ": " : "",
+		 format);
+
 	va_start(args, format);
-	evdev_log_msg_va(device, priority, format, args);
+	log_msg_va(evdev_libinput_context(device), priority, buf, args);
 	va_end(args);
 
 	if (state == RATELIMIT_THRESHOLD)
@@ -871,6 +894,33 @@ evdev_device_mm_to_units(const struct evdev_device *device,
 
 	return units;
 }
+
+static inline struct device_coord_rect
+evdev_phys_rect_to_units(const struct evdev_device *device,
+			 const struct phys_rect *mm)
+{
+	struct device_coord_rect units = {0};
+	const struct input_absinfo *absx, *absy;
+
+	if (device->abs.absinfo_x == NULL ||
+	    device->abs.absinfo_y == NULL) {
+		log_bug_libinput(evdev_libinput_context(device),
+				 "%s: is not an abs device\n",
+				 device->devname);
+		return units;
+	}
+
+	absx = device->abs.absinfo_x;
+	absy = device->abs.absinfo_y;
+
+	units.x = mm->x * absx->resolution + absx->minimum;
+	units.y = mm->y * absy->resolution + absy->minimum;
+	units.w = mm->w * absx->resolution;
+	units.h = mm->h * absy->resolution;
+
+	return units;
+}
+
 
 static inline void
 evdev_device_init_abs_range_warnings(struct evdev_device *device)

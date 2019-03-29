@@ -95,6 +95,18 @@ struct phys_coords {
 	double y;
 };
 
+/* A rectangle in mm, x/y is the top-left corner */
+struct phys_rect {
+	double x, y;
+	double w, h;
+};
+
+/* A rectangle in device coordinates, x/y is the top-left corner */
+struct device_coord_rect {
+	int x, y;
+	int w, h;
+};
+
 /* A pair of tilt flags */
 struct wheel_tilt_flags {
 	bool vertical, horizontal;
@@ -403,6 +415,15 @@ typedef void (*libinput_source_dispatch_t)(void *data);
 #define log_bug_kernel_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "kernel bug: " __VA_ARGS__)
 #define log_bug_libinput_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "libinput bug: " __VA_ARGS__)
 #define log_bug_client_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "client bug: " __VA_ARGS__)
+
+static inline bool
+is_logged(const struct libinput *libinput,
+	  enum libinput_log_priority priority)
+{
+       return libinput->log_handler &&
+               libinput->log_priority <= priority;
+}
+
 
 void
 log_msg_ratelimit(struct libinput *libinput,
@@ -730,14 +751,14 @@ length_in_mm(const struct phys_coords mm)
 }
 
 enum directions {
-	N  = 1 << 0,
-	NE = 1 << 1,
-	E  = 1 << 2,
-	SE = 1 << 3,
-	S  = 1 << 4,
-	SW = 1 << 5,
-	W  = 1 << 6,
-	NW = 1 << 7,
+	N  = bit(0),
+	NE = bit(1),
+	E  = bit(2),
+	SE = bit(3),
+	S  = bit(4),
+	SW = bit(5),
+	W  = bit(6),
+	NW = bit(7),
 	UNDEFINED_DIRECTION = 0xff
 };
 
@@ -801,4 +822,19 @@ device_float_get_direction(const struct device_float_coords coords)
 {
 	return xy_get_direction(coords.x, coords.y);
 }
+
+/**
+ * Returns true if the point is within the given rectangle, including the
+ * left edge but excluding the right edge.
+ */
+static inline bool
+point_in_rect(const struct device_coords *point,
+	      const struct device_coord_rect *rect)
+{
+	return (point->x >= rect->x &&
+		point->x < rect->x + rect->w &&
+		point->y >= rect->y &&
+		point->y < rect->y + rect->h);
+}
+
 #endif /* LIBINPUT_PRIVATE_H */

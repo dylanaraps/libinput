@@ -58,16 +58,14 @@
 #include "litest-int.h"
 #include "libinput-util.h"
 #include "quirks.h"
+#include "builddir.h"
 
 #include <linux/kd.h>
 
 #define UDEV_RULES_D "/run/udev/rules.d"
 #define UDEV_RULE_PREFIX "99-litest-"
-#define UDEV_HWDB_D "/etc/udev/hwdb.d"
 #define UDEV_MODEL_QUIRKS_RULE_FILE UDEV_RULES_D \
 	"/91-litest-model-quirks-REMOVEME-XXXXXX.rules"
-#define UDEV_MODEL_QUIRKS_HWDB_FILE UDEV_HWDB_D \
-	"/91-litest-model-quirks-REMOVEME-XXXXXX.hwdb"
 #define UDEV_TEST_DEVICE_RULE_FILE UDEV_RULES_D \
 	"/91-litest-test-device-REMOVEME-XXXXXXX.rules"
 #define UDEV_DEVICE_GROUPS_FILE UDEV_RULES_D \
@@ -77,6 +75,7 @@ static int jobs = 8;
 static bool in_debugger = false;
 static bool verbose = false;
 static bool run_deviceless = false;
+static bool use_system_rules_quirks = false;
 const char *filter_test = NULL;
 const char *filter_device = NULL;
 const char *filter_group = NULL;
@@ -92,7 +91,14 @@ struct list created_files_list; /* list of all files to remove at the end of
 
 static void litest_init_udev_rules(struct list *created_files_list);
 static void litest_remove_udev_rules(struct list *created_files_list);
-static inline char *litest_install_quirks(struct list *created_files_list);
+
+enum quirks_setup_mode {
+	QUIRKS_SETUP_USE_SRCDIR,
+	QUIRKS_SETUP_ONLY_DEVICE,
+	QUIRKS_SETUP_FULL,
+};
+static void litest_setup_quirks(struct list *created_files_list,
+				enum quirks_setup_mode mode);
 
 /* defined for the litest selftest */
 #ifndef LITEST_DISABLE_BACKTRACE_LOGGING
@@ -271,7 +277,6 @@ static void
 litest_reload_udev_rules(void)
 {
 	litest_system("udevadm control --reload-rules");
-	litest_system("udevadm hwdb --update");
 }
 
 static void
@@ -749,8 +754,13 @@ litest_run_suite(struct list *tests, int which, int max, int error_fd)
 	};
 	struct name *n, *tmp;
 	struct list testnames;
+	const char *data_path;
 
-	quirks_context = quirks_init_subsystem(getenv("LIBINPUT_QUIRKS_DIR"),
+	data_path = getenv("LIBINPUT_QUIRKS_DIR");
+	if (!data_path)
+		data_path = LIBINPUT_QUIRKS_DIR;
+
+	quirks_context = quirks_init_subsystem(data_path,
 					       NULL,
 					       quirk_log_handler,
 					       NULL,
@@ -964,7 +974,6 @@ litest_run(int argc, char **argv)
 {
 	int failed = 0;
 	int inhibit_lock_fd;
-	char *quirks_dir;
 
 	list_init(&created_files_list);
 
@@ -978,13 +987,18 @@ litest_run(int argc, char **argv)
 		verbose = true;
 
 	if (run_deviceless) {
-		quirks_dir = safe_strdup(LIBINPUT_QUIRKS_SRCDIR);
+		litest_setup_quirks(&created_files_list,
+				    QUIRKS_SETUP_USE_SRCDIR);
 	} else {
+		enum quirks_setup_mode mode;
 		litest_init_udev_rules(&created_files_list);
-		quirks_dir = litest_install_quirks(&created_files_list);
+
+
+		mode = use_system_rules_quirks ?
+				QUIRKS_SETUP_ONLY_DEVICE :
+				QUIRKS_SETUP_FULL;
+		litest_setup_quirks(&created_files_list, mode);
 	}
-	setenv("LIBINPUT_QUIRKS_DIR", quirks_dir, 1);
-	free(quirks_dir);
 
 	litest_setup_sighandler(SIGINT);
 
@@ -1074,7 +1088,7 @@ merge_events(const int *orig, const int *override)
 }
 
 static inline struct created_file *
-litest_copy_file(const char *dest, const char *src, const char *header)
+litest_copy_file(const char *dest, const char *src, const char *header, bool is_file)
 {
 	int in, out, length;
 	struct created_file *file;
@@ -1103,15 +1117,21 @@ litest_copy_file(const char *dest, const char *src, const char *header)
 		litest_assert_int_eq(write(out, header, length), length);
 	}
 
-	in = open(src, O_RDONLY);
-	if (in == -1)
-		litest_abort_msg("Failed to open file %s (%s)\n",
-				 src,
-				 strerror(errno));
-	/* lazy, just check for error and empty file copy */
-	litest_assert_int_gt(litest_send_file(out, in), 0);
+	if (is_file) {
+		in = open(src, O_RDONLY);
+		if (in == -1)
+			litest_abort_msg("Failed to open file %s (%s)\n",
+					 src,
+					 strerror(errno));
+		/* lazy, just check for error and empty file copy */
+		litest_assert_int_gt(litest_send_file(out, in), 0);
+		close(in);
+	} else {
+		size_t written = write(out, src, strlen(src));
+		litest_assert_int_eq(written, strlen(src));
+
+	}
 	close(out);
-	close(in);
 
 	return file;
 }
@@ -1124,24 +1144,34 @@ litest_install_model_quirks(struct list *created_files_list)
 			 "# WARNING: REMOVE THIS FILE\n"
 			 "# This is a run-time file for the libinput test suite and\n"
 			 "# should be removed on exit. If the test-suite is not currently \n"
-			 "# running, remove this file and update your hwdb: \n"
-			 "#       sudo udevadm hwdb --update\n"
+			 "# running, remove this file\n"
 			 "#################################################################\n\n";
 	struct created_file *file;
+	const char *test_device_udev_rule = "KERNELS==\"*input*\", "
+					    "ATTRS{name}==\"litest *\", "
+					    "ENV{LIBINPUT_TEST_DEVICE}=\"1\"";
 
 	file = litest_copy_file(UDEV_TEST_DEVICE_RULE_FILE,
-				LIBINPUT_TEST_DEVICE_RULES_FILE,
-				warning);
+				test_device_udev_rule,
+				warning,
+				false);
 	list_insert(created_files_list, &file->link);
+
+	/* Ony install the litest device rule when we're running as system
+	 * test suite, we expect the others to be in place already */
+	if (use_system_rules_quirks)
+		return;
 
 	file = litest_copy_file(UDEV_DEVICE_GROUPS_FILE,
 				LIBINPUT_DEVICE_GROUPS_RULES_FILE,
-				warning);
+				warning,
+				true);
 	list_insert(created_files_list, &file->link);
 
 	file = litest_copy_file(UDEV_MODEL_QUIRKS_RULE_FILE,
 				LIBINPUT_MODEL_QUIRKS_UDEV_RULES_FILE,
-				warning);
+				warning,
+				true);
 	list_insert(created_files_list, &file->link);
 }
 
@@ -1172,24 +1202,22 @@ litest_init_device_quirk_file(const char *data_dir,
 	return safe_strdup(path);
 }
 
-
-static char *
-litest_install_quirks(struct list *created_files_list)
+/**
+ * Install the quirks from the quirks/ source directory.
+ */
+static void
+litest_install_source_quirks(struct list *created_files_list,
+			     const char *dirname)
 {
-	struct litest_test_device *dev;
-	struct created_file *file;
-	char dirname[] = "/run/litest-XXXXXX";
+	const char *quirksdir = "quirks/";
 	char **quirks, **q;
-
-	litest_assert_notnull(mkdtemp(dirname));
-	litest_assert_int_ne(chmod(dirname, 0755), -1);
 
 	quirks = strv_from_string(LIBINPUT_QUIRKS_FILES, ":");
 	litest_assert(quirks);
 
 	q = quirks;
 	while (*q) {
-		const char *quirksdir = "quirks/";
+		struct created_file *file;
 		char *filename;
 		char dest[PATH_MAX];
 		char src[PATH_MAX];
@@ -1200,13 +1228,21 @@ litest_install_quirks(struct list *created_files_list)
 		snprintf(src, sizeof(src), "%s/%s",
 			 LIBINPUT_QUIRKS_SRCDIR, filename);
 		snprintf(dest, sizeof(dest), "%s/%s", dirname, filename);
-		file = litest_copy_file(dest, src, NULL);
+		file = litest_copy_file(dest, src, NULL, true);
 		list_append(created_files_list, &file->link);
 		q++;
 	}
 	strv_free(quirks);
+}
 
-	/* Now add the per-device special config files */
+/**
+ * Install the quirks from the various litest test devices
+ */
+static void
+litest_install_device_quirks(struct list *created_files_list,
+			     const char *dirname)
+{
+	struct litest_test_device *dev;
 
 	list_for_each(dev, &devices, node) {
 		char *path;
@@ -1218,12 +1254,38 @@ litest_install_quirks(struct list *created_files_list)
 			list_insert(created_files_list, &file->link);
 		}
 	}
+}
 
-	file = zalloc(sizeof *file);
-	file->path = safe_strdup(dirname);
-	list_append(created_files_list, &file->link);
+static void
+litest_setup_quirks(struct list *created_files_list,
+		    enum quirks_setup_mode mode)
+{
+	struct created_file *file = NULL;
+	const char *dirname;
+	char tmpdir[] = "/run/litest-XXXXXX";
 
-	return safe_strdup(dirname);
+	switch (mode) {
+	case QUIRKS_SETUP_USE_SRCDIR:
+		dirname = LIBINPUT_QUIRKS_SRCDIR;
+		break;
+	case QUIRKS_SETUP_ONLY_DEVICE:
+		dirname = LIBINPUT_QUIRKS_DIR;
+		litest_install_device_quirks(created_files_list, dirname);
+		break;
+	case QUIRKS_SETUP_FULL:
+		litest_assert_notnull(mkdtemp(tmpdir));
+		litest_assert_int_ne(chmod(tmpdir, 0755), -1);
+		file = zalloc(sizeof *file);
+		file->path = safe_strdup(tmpdir);
+		dirname = tmpdir;
+
+		litest_install_source_quirks(created_files_list, dirname);
+		litest_install_device_quirks(created_files_list, dirname);
+		list_append(created_files_list, &file->link);
+		break;
+	}
+
+	setenv("LIBINPUT_QUIRKS_DIR", dirname, 1);
 }
 
 static inline void
@@ -1254,7 +1316,6 @@ static inline void
 litest_init_udev_rules(struct list *created_files)
 {
 	mkdir_p(UDEV_RULES_D);
-	mkdir_p(UDEV_HWDB_D);
 
 	litest_install_model_quirks(created_files);
 	litest_init_all_device_udev_rules(created_files);
@@ -1334,6 +1395,7 @@ litest_create(enum litest_device_type which,
 	const char *path;
 	int fd, rc;
 	bool found = false;
+	bool create_device = true;
 
 	list_for_each(dev, &devices, node) {
 		if (dev->type == which) {
@@ -1346,19 +1408,22 @@ litest_create(enum litest_device_type which,
 		ck_abort_msg("Invalid device type %d\n", which);
 
 	d = zalloc(sizeof(*d));
+	d->which = which;
 
 	/* device has custom create method */
 	if (dev->create) {
-		dev->create(d);
+		create_device = dev->create(d);
 		if (abs_override || events_override) {
 			litest_abort_msg("Custom create cannot be overridden");
 		}
-	} else {
-		abs = merge_absinfo(dev->absinfo, abs_override);
-		events = merge_events(dev->events, events_override);
-		name = name_override ? name_override : dev->name;
-		id = id_override ? id_override : dev->id;
+	}
 
+	abs = merge_absinfo(dev->absinfo, abs_override);
+	events = merge_events(dev->events, events_override);
+	name = name_override ? name_override : dev->name;
+	id = id_override ? id_override : dev->id;
+
+	if (create_device) {
 		d->uinput = litest_create_uinput_device_from_description(name,
 									 id,
 									 abs,
@@ -1375,10 +1440,10 @@ litest_create(enum litest_device_type which,
 				break;
 			}
 		}
-
-		free(abs);
-		free(events);
 	}
+
+	free(abs);
+	free(events);
 
 	path = libevdev_uinput_get_devnode(d->uinput);
 	litest_assert(path != NULL);
@@ -1471,10 +1536,23 @@ litest_add_device_with_overrides(struct libinput *libinput,
 	libinput_device_ref(d->libinput_device);
 
 	if (d->interface) {
-		d->interface->min[ABS_X] = libevdev_get_abs_minimum(d->evdev, ABS_X);
-		d->interface->max[ABS_X] = libevdev_get_abs_maximum(d->evdev, ABS_X);
-		d->interface->min[ABS_Y] = libevdev_get_abs_minimum(d->evdev, ABS_Y);
-		d->interface->max[ABS_Y] = libevdev_get_abs_maximum(d->evdev, ABS_Y);
+		unsigned int code;
+
+		code = ABS_X;
+		if (!libevdev_has_event_code(d->evdev, EV_ABS, code))
+			code = ABS_MT_POSITION_X;
+		if (libevdev_has_event_code(d->evdev, EV_ABS, code)) {
+			d->interface->min[ABS_X] = libevdev_get_abs_minimum(d->evdev, code);
+			d->interface->max[ABS_X] = libevdev_get_abs_maximum(d->evdev, code);
+		}
+
+		code = ABS_Y;
+		if (!libevdev_has_event_code(d->evdev, EV_ABS, code))
+			code = ABS_MT_POSITION_Y;
+		if (libevdev_has_event_code(d->evdev, EV_ABS, code)) {
+			d->interface->min[ABS_Y] = libevdev_get_abs_minimum(d->evdev, code);
+			d->interface->max[ABS_Y] = libevdev_get_abs_maximum(d->evdev, code);
+		}
 	}
 	return d;
 }
@@ -1596,8 +1674,10 @@ litest_delete_device(struct litest_device *d)
 		libinput_path_remove_device(d->libinput_device);
 		libinput_device_unref(d->libinput_device);
 	}
-	if (d->owns_context)
+	if (d->owns_context) {
+		libinput_dispatch(d->libinput);
 		libinput_unref(d->libinput);
+	}
 	close(libevdev_get_fd(d->evdev));
 	libevdev_free(d->evdev);
 	libevdev_uinput_destroy(d->uinput);
@@ -1879,6 +1959,23 @@ litest_slot_start(struct litest_device *d,
 
 	d->semi_mt.touches[slot].x = x;
 	d->semi_mt.touches[slot].y = y;
+}
+
+void
+litest_touch_sequence(struct litest_device *d,
+		      unsigned int slot,
+		      double x_from,
+		      double y_from,
+		      double x_to,
+		      double y_to,
+		      int steps)
+{
+	litest_touch_down(d, slot, x_from, y_from);
+	litest_touch_move_to(d, slot,
+			     x_from, y_from,
+			     x_to, y_to,
+			     steps);
+	litest_touch_up(d, slot);
 }
 
 void
@@ -2569,6 +2666,48 @@ litest_drain_events(struct libinput *li)
 
 	libinput_dispatch(li);
 	while ((event = libinput_get_event(li))) {
+		libinput_event_destroy(event);
+		libinput_dispatch(li);
+	}
+}
+
+
+void
+litest_drain_events_of_type(struct libinput *li, ...)
+{
+	enum libinput_event_type type;
+	enum libinput_event_type types[32] = {LIBINPUT_EVENT_NONE};
+	size_t ntypes = 0;
+	va_list args;
+
+	va_start(args, li);
+	type = va_arg(args, int);
+	while ((int)type != -1) {
+		litest_assert(type > 0);
+		litest_assert(ntypes < ARRAY_LENGTH(types));
+		types[ntypes++] = type;
+		type = va_arg(args, int);
+	}
+	va_end(args);
+
+	libinput_dispatch(li);
+	type = libinput_next_event_type(li);
+	while (type !=  LIBINPUT_EVENT_NONE) {
+		struct libinput_event *event;
+		bool found = false;
+
+		type = libinput_next_event_type(li);
+
+		for (size_t i = 0; i < ntypes; i++) {
+			if (type == types[i]) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			return;
+
+		event = libinput_get_event(li);
 		libinput_event_destroy(event);
 		libinput_dispatch(li);
 	}
@@ -3501,7 +3640,7 @@ litest_timeout_softbuttons(void)
 void
 litest_timeout_buttonscroll(void)
 {
-	msleep(300);
+	msleep(45);
 }
 
 void
@@ -3779,14 +3918,22 @@ litest_parse_argv(int argc, char **argv)
 		{ "jobs", 1, 0, OPT_JOBS },
 		{ "list", 0, 0, OPT_LIST },
 		{ "verbose", 0, 0, OPT_VERBOSE },
+		{ "help", 0, 0, 'h'},
 		{ 0, 0, 0, 0}
 	};
-
 	enum {
 		JOBS_DEFAULT,
 		JOBS_SINGLE,
 		JOBS_CUSTOM
 	} want_jobs = JOBS_DEFAULT;
+	char *builddir;
+
+	/* If we are not running from the builddir, we assume we're running
+	 * against the system as installed */
+	builddir = builddir_lookup();
+	if (!builddir)
+		use_system_rules_quirks = true;
+	free(builddir);
 
 	if (in_debugger)
 		want_jobs = JOBS_SINGLE;
@@ -3799,6 +3946,30 @@ litest_parse_argv(int argc, char **argv)
 		if (c == -1)
 			break;
 		switch(c) {
+		default:
+		case 'h':
+			printf("Usage: %s [--verbose] [--jobs] [--filter-...]\n"
+			       "\n"
+			       "Options:\n"
+			       "    --filter-test=.... \n"
+			       "          Glob to filter on test names\n"
+			       "    --filter-device=.... \n"
+			       "          Glob to filter on device names\n"
+			       "    --filter-group=.... \n"
+			       "          Glob to filter on test groups\n"
+			       "    --filter-deviceless=.... \n"
+			       "          Glob to filter on tests that do not create test devices\n"
+			       "    --verbose\n"
+			       "          Enable verbose output\n"
+			       "    --jobs 8\n"
+			       "          Number of parallel test suites to run (default: 8)\n"
+			       "    --list\n"
+			       "          List all tests\n"
+			       "\n"
+			       "See the libinput-test-suite(1) man page for details.\n",
+			       program_invocation_short_name);
+			exit(c != 'h');
+			break;
 		case OPT_FILTER_TEST:
 			filter_test = optarg;
 			if (want_jobs == JOBS_DEFAULT)
@@ -3827,9 +3998,6 @@ litest_parse_argv(int argc, char **argv)
 		case OPT_FILTER_DEVICELESS:
 			run_deviceless = true;
 			break;
-		default:
-			fprintf(stderr, "usage: %s [--list]\n", argv[0]);
-			return LITEST_MODE_ERROR;
 		}
 	}
 
@@ -4012,7 +4180,7 @@ main(int argc, char **argv)
 	}
 
 	if (setrlimit(RLIMIT_CORE, &corelimit) != 0)
-		perror("WARNING: Core dumps not disabled. Reason");
+		perror("WARNING: Core dumps not disabled");
 
 	tty_mode = disable_tty();
 
@@ -4031,6 +4199,6 @@ main(int argc, char **argv)
 #endif
 	}
 
-	return failed_tests;
+	return min(failed_tests, 255);
 }
 #endif

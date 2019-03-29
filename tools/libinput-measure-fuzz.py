@@ -110,11 +110,11 @@ class Device(object):
 
         if axes[0x35] is not None:
             if axes[0x35] != axes[0x00]:
-                raise InvalidConfigurationError('fuzz for ABS_X differs from ABS_MT_POSITION_X')
+                print_bold('WARNING: fuzz mismatch ABS_X: {}, ABS_MT_POSITION_X: {}'.format(axes[0x00], axes[0x35]))
 
         if axes[0x36] is not None:
             if axes[0x36] != axes[0x01]:
-                raise InvalidConfigurationError('fuzz for ABS_Y differs from ABS_MT_POSITION_Y')
+                print_bold('WARNING: fuzz mismatch ABS_Y: {}, ABS_MT_POSITION_Y: {}'.format(axes[0x01], axes[0x36]))
 
         xfuzz = axes[0x35] or axes[0x00]
         yfuzz = axes[0x36] or axes[0x01]
@@ -128,9 +128,9 @@ class Device(object):
 
         return (xfuzz, yfuzz)
 
-    def check_axis(self):
+    def check_axes(self):
         '''
-        Returns a duple of (xfuzz, yfuzz) with the fuzz as set on the device
+        Returns a tuple of (xfuzz, yfuzz) with the fuzz as set on the device
         axis. Returns None if no fuzz is set.
         '''
         # capabilities returns a dict with the EV_* codes as key,
@@ -216,12 +216,11 @@ def handle_existing_entry(device, fuzz):
             template += [' EVDEV_ABS_35={}'.format(overrides[0x35]),
                          ' EVDEV_ABS_36={}'.format(overrides[0x36])]
 
-    found = False
     print('Checking in {}... '.format(OVERRIDE_HWDB_FILE), end='')
     entry, prefix, lineno = check_file_for_lines(OVERRIDE_HWDB_FILE, template)
     if entry is not None:
         print_green('found')
-        print('The existing hwdb entry can be overwritten');
+        print('The existing hwdb entry can be overwritten')
         return False
     else:
         print_red('not found')
@@ -231,7 +230,7 @@ def handle_existing_entry(device, fuzz):
             print_green('found')
         else:
             print_red('not found')
-            print('The device has a hwdb override defined but it\'s not where I expected it to be.');
+            print('The device has a hwdb override defined but it\'s not where I expected it to be.')
             print('Please look at the libinput documentation for more details.')
             print('Exiting now.')
             return True
@@ -304,7 +303,7 @@ def test_hwdb_entry(device, fuzz):
     print_bold('Testing... ', end='')
 
     d = Device(device.path)
-    f = d.check_axis()
+    f = d.check_axes()
     if fuzz == f[0] and fuzz == f[1]:
         print_green('Success')
         return True
@@ -403,7 +402,7 @@ def write_udev_rule(device, fuzz):
     fname = OVERRIDE_HWDB_FILE
     try:
         fd = open(fname, 'x')
-    except FileExistsError as e:
+    except FileExistsError:
         yesno = input('File {} exists, overwrite? [Y/n] '.format(fname))
         if yesno.lower == 'n':
             return
@@ -431,11 +430,11 @@ def write_udev_rule(device, fuzz):
 
 def main(args):
     parser = argparse.ArgumentParser(
-            description='Print fuzz settings'
+            description='Print fuzz settings and/or suggest udev rules for the fuzz to be adjusted.'
     )
     parser.add_argument('path', metavar='/dev/input/event0',
                         nargs='?', type=str, help='Path to device (optional)')
-    parser.add_argument('--fuzz',  type=int, help='Suggsted fuzz')
+    parser.add_argument('--fuzz',  type=int, help='Suggested fuzz')
     args = parser.parse_args()
 
     try:
@@ -445,18 +444,20 @@ def main(args):
         fuzz = device.check_property()
         print_fuzz('udev property', fuzz)
 
-        fuzz = device.check_axis()
+        fuzz = device.check_axes()
         print_fuzz('axes', fuzz)
 
         userfuzz = args.fuzz
         if userfuzz is not None:
             write_udev_rule(device, userfuzz)
 
-    except PermissionError as e:
+    except PermissionError:
         print('Permission denied, please re-run as root')
     except InvalidConfigurationError as e:
         print('Error: {}'.format(e))
-    except KeyboardInterrupt as e:
+    except InvalidDeviceError as e:
+        print('Error: {}'.format(e))
+    except KeyboardInterrupt:
         print('Exited on user request')
 
 

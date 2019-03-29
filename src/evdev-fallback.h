@@ -34,13 +34,13 @@
 enum debounce_state {
 	DEBOUNCE_STATE_IS_UP = 100,
 	DEBOUNCE_STATE_IS_DOWN,
-	DEBOUNCE_STATE_DOWN_WAITING,
-	DEBOUNCE_STATE_RELEASE_PENDING,
-	DEBOUNCE_STATE_RELEASE_DELAYED,
-	DEBOUNCE_STATE_RELEASE_WAITING,
-	DEBOUNCE_STATE_MAYBE_SPURIOUS,
-	DEBOUNCE_STATE_RELEASED,
-	DEBOUNCE_STATE_PRESS_PENDING,
+	DEBOUNCE_STATE_IS_DOWN_WAITING,
+	DEBOUNCE_STATE_IS_UP_DELAYING,
+	DEBOUNCE_STATE_IS_UP_DELAYING_SPURIOUS,
+	DEBOUNCE_STATE_IS_UP_DETECTING_SPURIOUS,
+	DEBOUNCE_STATE_IS_DOWN_DETECTING_SPURIOUS,
+	DEBOUNCE_STATE_IS_UP_WAITING,
+	DEBOUNCE_STATE_IS_DOWN_DELAYING,
 
 	DEBOUNCE_STATE_DISABLED = 999,
 };
@@ -118,10 +118,6 @@ struct fallback_dispatch {
 
 	enum evdev_event_type pending_event;
 
-	/* true if we're reading events (i.e. not suspended) but we're
-	   ignoring them */
-	bool ignore_events;
-
 	struct {
 		unsigned int button_code;
 		uint64_t button_time;
@@ -144,6 +140,16 @@ struct fallback_dispatch {
 		 */
 		struct list paired_keyboard_list;
 	} lid;
+
+	/* pen/touch arbitration has a delayed state,
+	 * in_arbitration is what decides when to filter.
+	 */
+	struct {
+		enum evdev_arbitration_state state;
+		bool in_arbitration;
+		struct device_coord_rect rect;
+		struct libinput_timer arbitration_timer;
+	} arbitration;
 };
 
 static inline struct fallback_dispatch*

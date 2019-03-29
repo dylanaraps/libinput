@@ -1181,6 +1181,32 @@ START_TEST(pointer_scroll_button_middle_emulation)
 }
 END_TEST
 
+START_TEST(pointer_scroll_button_device_remove_while_down)
+{
+	struct libinput *li;
+	struct litest_device *dev;
+
+	li = litest_create_context();
+
+	dev = litest_add_device(li, LITEST_MOUSE);
+	libinput_device_config_scroll_set_method(dev->libinput_device,
+						 LIBINPUT_CONFIG_SCROLL_ON_BUTTON_DOWN);
+	libinput_device_config_scroll_set_button(dev->libinput_device,
+						 BTN_LEFT);
+	litest_drain_events(li);
+
+	litest_event(dev, EV_KEY, BTN_LEFT, 1);
+	litest_event(dev, EV_SYN, SYN_REPORT, 0);
+	libinput_dispatch(li);
+
+	/* delete the device  while the timer is still active */
+	litest_delete_device(dev);
+	libinput_dispatch(li);
+
+	libinput_unref(li);
+}
+END_TEST
+
 START_TEST(pointer_scroll_nowheel_defaults)
 {
 	struct litest_device *dev = litest_current_device();
@@ -2081,6 +2107,62 @@ START_TEST(middlebutton_button_scrolling_middle)
 }
 END_TEST
 
+START_TEST(middlebutton_device_remove_while_down)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput_device *device = dev->libinput_device;
+	struct libinput *li = dev->libinput;
+	enum libinput_config_status status;
+
+	libinput_device_config_scroll_set_method(device,
+						 LIBINPUT_CONFIG_SCROLL_NO_SCROLL);
+	status = libinput_device_config_middle_emulation_set_enabled(
+				device,
+				LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED);
+	if (status == LIBINPUT_CONFIG_STATUS_UNSUPPORTED)
+		return;
+
+	litest_drain_events(li);
+
+	litest_event(dev, EV_KEY, BTN_LEFT, 1);
+	litest_event(dev, EV_SYN, SYN_REPORT, 0);
+	litest_event(dev, EV_KEY, BTN_RIGHT, 1);
+	litest_event(dev, EV_SYN, SYN_REPORT, 0);
+	libinput_dispatch(li);
+
+	litest_assert_button_event(li,
+				   BTN_MIDDLE,
+				   LIBINPUT_BUTTON_STATE_PRESSED);
+
+	litest_assert_empty_queue(li);
+}
+END_TEST
+
+START_TEST(middlebutton_device_remove_while_one_is_down)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput_device *device = dev->libinput_device;
+	struct libinput *li = dev->libinput;
+	enum libinput_config_status status;
+
+	libinput_device_config_scroll_set_method(device,
+						 LIBINPUT_CONFIG_SCROLL_NO_SCROLL);
+	status = libinput_device_config_middle_emulation_set_enabled(
+				device,
+				LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED);
+	if (status == LIBINPUT_CONFIG_STATUS_UNSUPPORTED)
+		return;
+
+	litest_drain_events(li);
+
+	litest_event(dev, EV_KEY, BTN_RIGHT, 1);
+	litest_event(dev, EV_SYN, SYN_REPORT, 0);
+	libinput_dispatch(li);
+
+	litest_assert_empty_queue(li);
+}
+END_TEST
+
 START_TEST(pointer_time_usec)
 {
 	struct litest_device *dev = litest_current_device();
@@ -2606,6 +2688,7 @@ TEST_COLLECTION(pointer)
 	litest_add("pointer:scroll", pointer_scroll_button_noscroll, LITEST_ANY, LITEST_RELATIVE|LITEST_BUTTON);
 	litest_add("pointer:scroll", pointer_scroll_button_no_event_before_timeout, LITEST_RELATIVE|LITEST_BUTTON, LITEST_ANY);
 	litest_add("pointer:scroll", pointer_scroll_button_middle_emulation, LITEST_RELATIVE|LITEST_BUTTON, LITEST_ANY);
+	litest_add("pointer:scroll", pointer_scroll_button_device_remove_while_down, LITEST_ANY, LITEST_RELATIVE|LITEST_BUTTON);
 	litest_add("pointer:scroll", pointer_scroll_nowheel_defaults, LITEST_RELATIVE|LITEST_BUTTON, LITEST_WHEEL);
 	litest_add_for_device("pointer:scroll", pointer_scroll_defaults_logitech_marble , LITEST_LOGITECH_TRACKBALL);
 	litest_add("pointer:scroll", pointer_scroll_natural_defaults, LITEST_WHEEL, LITEST_TABLET);
@@ -2646,6 +2729,8 @@ TEST_COLLECTION(pointer)
 	litest_add_for_device("pointer:middlebutton", middlebutton_default_alps, LITEST_ALPS_SEMI_MT);
 	litest_add("pointer:middlebutton", middlebutton_button_scrolling, LITEST_RELATIVE|LITEST_BUTTON, LITEST_CLICKPAD);
 	litest_add("pointer:middlebutton", middlebutton_button_scrolling_middle, LITEST_RELATIVE|LITEST_BUTTON, LITEST_CLICKPAD);
+	litest_add("pointer:middlebutton", middlebutton_device_remove_while_down, LITEST_BUTTON, LITEST_CLICKPAD);
+	litest_add("pointer:middlebutton", middlebutton_device_remove_while_one_is_down, LITEST_BUTTON, LITEST_CLICKPAD);
 
 	litest_add_ranged("pointer:state", pointer_absolute_initial_state, LITEST_ABSOLUTE, LITEST_ANY, &axis_range);
 

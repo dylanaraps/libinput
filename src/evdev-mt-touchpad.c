@@ -1028,7 +1028,7 @@ tp_palm_detect_arbitration_triggered(struct tp_dispatch *tp,
 				     struct tp_touch *t,
 				     uint64_t time)
 {
-	if (!tp->arbitration.in_arbitration)
+	if (tp->arbitration.state == ARBITRATION_NOT_ACTIVE)
 		return false;
 
 	t->palm.state = PALM_ARBITRATION;
@@ -2689,27 +2689,30 @@ tp_arbitration_timeout(uint64_t now, void *data)
 {
 	struct tp_dispatch *tp = data;
 
-	if (tp->arbitration.in_arbitration)
-		tp->arbitration.in_arbitration = false;
+	if (tp->arbitration.state != ARBITRATION_NOT_ACTIVE)
+		tp->arbitration.state = ARBITRATION_NOT_ACTIVE;
 }
 
 static void
 tp_interface_toggle_touch(struct evdev_dispatch *dispatch,
 			  struct evdev_device *device,
-			  bool enable,
+			  enum evdev_arbitration_state which,
+			  const struct phys_rect *rect,
 			  uint64_t time)
 {
 	struct tp_dispatch *tp = tp_dispatch(dispatch);
-	bool arbitrate = !enable;
 
-	if (arbitrate == tp->arbitration.in_arbitration)
+	if (which == tp->arbitration.state)
 		return;
 
-	if (arbitrate) {
+	switch (which) {
+	case ARBITRATION_IGNORE_ALL:
+	case ARBITRATION_IGNORE_RECT:
 		libinput_timer_cancel(&tp->arbitration.arbitration_timer);
 		tp_clear_state(tp);
-		tp->arbitration.in_arbitration = true;
-	} else {
+		tp->arbitration.state = which;
+		break;
+	case ARBITRATION_NOT_ACTIVE:
 		/* if in-kernel arbitration is in use and there is a touch
 		 * and a pen in proximity, lifting the pen out of proximity
 		 * causes a touch begin for the touch. On a hand-lift the
@@ -2719,6 +2722,7 @@ tp_interface_toggle_touch(struct evdev_dispatch *dispatch,
 		 * event is caught as palm touch. */
 		libinput_timer_set(&tp->arbitration.arbitration_timer,
 				   time + ms2us(90));
+		break;
 	}
 }
 
@@ -2732,7 +2736,8 @@ static struct evdev_dispatch_interface tp_interface = {
 	.device_suspended = tp_interface_device_removed, /* treat as remove */
 	.device_resumed = tp_interface_device_added,   /* treat as add */
 	.post_added = NULL,
-	.toggle_touch = tp_interface_toggle_touch,
+	.touch_arbitration_toggle = tp_interface_toggle_touch,
+	.touch_arbitration_update_rect = NULL,
 	.get_switch_state = NULL,
 };
 
@@ -3235,7 +3240,7 @@ tp_init_palmdetect_arbitration(struct tp_dispatch *tp,
 			    tp_libinput_context(tp),
 			    timer_name,
 			    tp_arbitration_timeout, tp);
-	tp->arbitration.in_arbitration = false;
+	tp->arbitration.state = ARBITRATION_NOT_ACTIVE;
 }
 
 static void
@@ -3393,7 +3398,7 @@ tp_init_default_resolution(struct tp_dispatch *tp,
 
 	/* we only get here if
 	 * - the touchpad provides no resolution
-	 * - the udev hwdb didn't override the resoluion
+	 * - the udev hwdb didn't override the resolution
 	 * - no ATTR_SIZE_HINT is set
 	 *
 	 * The majority of touchpads that triggers all these conditions

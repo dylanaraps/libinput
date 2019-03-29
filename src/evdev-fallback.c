@@ -101,7 +101,8 @@ post_trackpoint_scroll(struct evdev_device *device,
 		return false;
 	case BUTTONSCROLL_BUTTON_DOWN:
 		/* if the button is down but scroll is not active, we're within the
-		   timeout where swallow motion events but don't post scroll buttons */
+		   timeout where we swallow motion events but don't post
+		   scroll buttons */
 		evdev_log_debug(device, "btnscroll: discarding\n");
 		return true;
 	case BUTTONSCROLL_READY:
@@ -238,7 +239,7 @@ fallback_flush_wheels(struct fallback_dispatch *dispatch,
 		evdev_notify_axis(
 			device,
 			time,
-			AS_MASK(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL),
+			bit(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL),
 			source,
 			&wheel_degrees,
 			&discrete);
@@ -257,7 +258,7 @@ fallback_flush_wheels(struct fallback_dispatch *dispatch,
 		evdev_notify_axis(
 			device,
 			time,
-			AS_MASK(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL),
+			bit(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL),
 			source,
 			&wheel_degrees,
 			&discrete);
@@ -621,6 +622,8 @@ fallback_process_touch(struct fallback_dispatch *dispatch,
 					slot->palm_state = PALM_NONE;
 					break;
 				}
+			} else {
+				slot->palm_state = PALM_NONE;
 			}
 		} else {
 			dispatch->pending_event |= EVDEV_ABSOLUTE_MT;
@@ -870,6 +873,21 @@ fallback_any_button_down(struct fallback_dispatch *dispatch,
 }
 
 static inline bool
+fallback_arbitrate_touch(struct fallback_dispatch *dispatch,
+			 struct mt_slot *slot)
+{
+	bool discard = false;
+
+	if (dispatch->arbitration.state == ARBITRATION_IGNORE_RECT &&
+	    point_in_rect(&slot->point, &dispatch->arbitration.rect)) {
+		slot->palm_state = PALM_IS_PALM;
+		discard = true;
+	}
+
+	return discard;
+}
+
+static inline bool
 fallback_flush_mt_events(struct fallback_dispatch *dispatch,
 			 struct evdev_device *device,
 			 uint64_t time)
@@ -886,7 +904,7 @@ fallback_flush_mt_events(struct fallback_dispatch *dispatch,
 
 		/* Any palm state other than PALM_NEW means we've either
 		 * already cancelled the touch or the touch was never
-		 * a finger anyway and we didn't send the being.
+		 * a finger anyway and we didn't send the begin.
 		 */
 		if (slot->palm_state == PALM_NEW) {
 			if (slot->state != SLOT_STATE_BEGIN)
@@ -898,10 +916,13 @@ fallback_flush_mt_events(struct fallback_dispatch *dispatch,
 		} else if (slot->palm_state == PALM_NONE) {
 			switch (slot->state) {
 			case SLOT_STATE_BEGIN:
-				sent = fallback_flush_mt_down(dispatch,
-							      device,
-							      i,
-							      time);
+				if (!fallback_arbitrate_touch(dispatch,
+							     slot)) {
+					sent = fallback_flush_mt_down(dispatch,
+								      device,
+								      i,
+								      time);
+				}
 				break;
 			case SLOT_STATE_UPDATE:
 				sent = fallback_flush_mt_motion(dispatch,
@@ -1017,7 +1038,7 @@ fallback_interface_process(struct evdev_dispatch *evdev_dispatch,
 {
 	struct fallback_dispatch *dispatch = fallback_dispatch(evdev_dispatch);
 
-	if (dispatch->ignore_events)
+	if (dispatch->arbitration.in_arbitration)
 		return;
 
 	switch (event->type) {
@@ -1042,12 +1063,16 @@ fallback_interface_process(struct evdev_dispatch *evdev_dispatch,
 static void
 cancel_touches(struct fallback_dispatch *dispatch,
 	       struct evdev_device *device,
+	       const struct device_coord_rect *rect,
 	       uint64_t time)
 {
 	unsigned int idx;
 	bool need_frame = false;
 
-	need_frame = fallback_flush_st_cancel(dispatch, device, time);
+	if (!rect || point_in_rect(&dispatch->abs.point, rect))
+		need_frame = fallback_flush_st_cancel(dispatch,
+						      device,
+						      time);
 
 	for (idx = 0; idx < dispatch->mt.slots_len; idx++) {
 		struct mt_slot *slot = &dispatch->mt.slots[idx];
@@ -1055,7 +1080,8 @@ cancel_touches(struct fallback_dispatch *dispatch,
 		if (slot->seat_slot == -1)
 			continue;
 
-		if (fallback_flush_mt_cancel(dispatch, device, idx, time))
+		if ((!rect || point_in_rect(&slot->point, rect)) &&
+		    fallback_flush_mt_cancel(dispatch, device, idx, time))
 			need_frame = true;
 	}
 
@@ -1095,7 +1121,7 @@ release_pressed_keys(struct fallback_dispatch *dispatch,
 				LIBINPUT_KEY_STATE_RELEASED);
 			break;
 		case KEY_TYPE_BUTTON:
-			evdev_pointer_notify_physical_button(
+			evdev_pointer_notify_button(
 				device,
 				time,
 				evdev_to_left_handed(device, code),
@@ -1123,7 +1149,7 @@ fallback_return_to_neutral_state(struct fallback_dispatch *dispatch,
 	if ((time = libinput_now(libinput)) == 0)
 		return;
 
-	cancel_touches(dispatch, device, time);
+	cancel_touches(dispatch, device, NULL, time);
 	release_pressed_keys(dispatch, device, time);
 	memset(dispatch->hw_key_mask, 0, sizeof(dispatch->hw_key_mask));
 	memset(dispatch->hw_key_mask, 0, sizeof(dispatch->last_hw_key_mask));
@@ -1146,6 +1172,7 @@ fallback_interface_remove(struct evdev_dispatch *evdev_dispatch)
 
 	libinput_timer_cancel(&dispatch->debounce.timer);
 	libinput_timer_cancel(&dispatch->debounce.timer_short);
+	libinput_timer_cancel(&dispatch->arbitration.arbitration_timer);
 
 	libinput_device_remove_event_listener(&dispatch->tablet_mode.other.listener);
 
@@ -1194,21 +1221,62 @@ fallback_interface_sync_initial_state(struct evdev_device *device,
 }
 
 static void
-fallback_interface_toggle_touch(struct evdev_dispatch *evdev_dispatch,
-				struct evdev_device *device,
-				bool enable,
+fallback_interface_update_rect(struct evdev_dispatch *evdev_dispatch,
+			       struct evdev_device *device,
+				const struct phys_rect *phys_rect,
 				uint64_t time)
 {
 	struct fallback_dispatch *dispatch = fallback_dispatch(evdev_dispatch);
-	bool ignore_events = !enable;
+	struct device_coord_rect rect = {0};
 
-	if (ignore_events == dispatch->ignore_events)
+	assert(phys_rect);
+
+	/* Existing touches do not change, we just update the rect and only
+	 * new touches in these areas will be ignored. If you want to paint
+	 * over your finger, be my guest. */
+	rect = evdev_phys_rect_to_units(device, phys_rect);
+	dispatch->arbitration.rect = rect;
+}
+
+static void
+fallback_interface_toggle_touch(struct evdev_dispatch *evdev_dispatch,
+				struct evdev_device *device,
+				enum evdev_arbitration_state which,
+				const struct phys_rect *phys_rect,
+				uint64_t time)
+{
+	struct fallback_dispatch *dispatch = fallback_dispatch(evdev_dispatch);
+	struct device_coord_rect rect = {0};
+
+	if (which == dispatch->arbitration.state)
 		return;
 
-	if (ignore_events)
+	switch (which) {
+	case ARBITRATION_NOT_ACTIVE:
+		/* if in-kernel arbitration is in use and there is a touch
+		 * and a pen in proximity, lifting the pen out of proximity
+		 * causes a touch begin for the touch. On a hand-lift the
+		 * proximity out precedes the touch up by a few ms, so we
+		 * get what looks like a tap. Fix this by delaying
+		 * arbitration by just a little bit so that any touch in
+		 * event is caught as palm touch. */
+		libinput_timer_set(&dispatch->arbitration.arbitration_timer,
+				   time + ms2us(90));
+		break;
+	case ARBITRATION_IGNORE_RECT:
+		assert(phys_rect);
+		rect = evdev_phys_rect_to_units(device, phys_rect);
+		cancel_touches(dispatch, device, &rect, time);
+		dispatch->arbitration.rect = rect;
+		break;
+	case ARBITRATION_IGNORE_ALL:
+		libinput_timer_cancel(&dispatch->arbitration.arbitration_timer);
 		fallback_return_to_neutral_state(dispatch, device);
+		dispatch->arbitration.in_arbitration = true;
+		break;
+	}
 
-	dispatch->ignore_events = ignore_events;
+	dispatch->arbitration.state = which;
 }
 
 static void
@@ -1216,6 +1284,7 @@ fallback_interface_destroy(struct evdev_dispatch *evdev_dispatch)
 {
 	struct fallback_dispatch *dispatch = fallback_dispatch(evdev_dispatch);
 
+	libinput_timer_destroy(&dispatch->arbitration.arbitration_timer);
 	libinput_timer_destroy(&dispatch->debounce.timer);
 	libinput_timer_destroy(&dispatch->debounce.timer_short);
 
@@ -1403,7 +1472,8 @@ struct evdev_dispatch_interface fallback_interface = {
 	.device_suspended = fallback_interface_device_removed, /* treat as remove */
 	.device_resumed = fallback_interface_device_added,   /* treat as add */
 	.post_added = fallback_interface_sync_initial_state,
-	.toggle_touch = fallback_interface_toggle_touch,
+	.touch_arbitration_toggle = fallback_interface_toggle_touch,
+	.touch_arbitration_update_rect = fallback_interface_update_rect,
 	.get_switch_state = fallback_interface_get_switch_state,
 };
 
@@ -1596,6 +1666,33 @@ fallback_dispatch_init_switch(struct fallback_dispatch *dispatch,
 	libinput_device_init_event_listener(&dispatch->tablet_mode.other.listener);
 }
 
+static void
+fallback_arbitration_timeout(uint64_t now, void *data)
+{
+	struct fallback_dispatch *dispatch = data;
+
+	if (dispatch->arbitration.in_arbitration)
+		dispatch->arbitration.in_arbitration = false;
+}
+
+static void
+fallback_init_arbitration(struct fallback_dispatch *dispatch,
+			  struct evdev_device *device)
+{
+	char timer_name[64];
+
+	snprintf(timer_name,
+		 sizeof(timer_name),
+		  "%s arbitration",
+		  evdev_device_get_sysname(device));
+	libinput_timer_init(&dispatch->arbitration.arbitration_timer,
+			    evdev_libinput_context(device),
+			    timer_name,
+			    fallback_arbitration_timeout,
+			    dispatch);
+	dispatch->arbitration.in_arbitration = false;
+}
+
 struct evdev_dispatch *
 fallback_dispatch_create(struct libinput_device *libinput_device)
 {
@@ -1652,6 +1749,7 @@ fallback_dispatch_create(struct libinput_device *libinput_device)
 	}
 
 	fallback_init_debounce(dispatch);
+	fallback_init_arbitration(dispatch, device);
 
 	return &dispatch->base;
 }

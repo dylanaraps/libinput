@@ -52,21 +52,21 @@
 #define INPUT_MAJOR 13
 
 #define DEFAULT_WHEEL_CLICK_ANGLE 15
-#define DEFAULT_BUTTON_SCROLL_TIMEOUT ms2us(200)
+#define DEFAULT_BUTTON_SCROLL_TIMEOUT ms2us(38)
 
 enum evdev_device_udev_tags {
-        EVDEV_UDEV_TAG_INPUT = (1 << 0),
-        EVDEV_UDEV_TAG_KEYBOARD = (1 << 1),
-        EVDEV_UDEV_TAG_MOUSE = (1 << 2),
-        EVDEV_UDEV_TAG_TOUCHPAD = (1 << 3),
-        EVDEV_UDEV_TAG_TOUCHSCREEN = (1 << 4),
-        EVDEV_UDEV_TAG_TABLET = (1 << 5),
-        EVDEV_UDEV_TAG_JOYSTICK = (1 << 6),
-        EVDEV_UDEV_TAG_ACCELEROMETER = (1 << 7),
-        EVDEV_UDEV_TAG_TABLET_PAD = (1 << 8),
-        EVDEV_UDEV_TAG_POINTINGSTICK = (1 << 9),
-        EVDEV_UDEV_TAG_TRACKBALL = (1 << 10),
-        EVDEV_UDEV_TAG_SWITCH = (1 << 11),
+        EVDEV_UDEV_TAG_INPUT		= bit(0),
+        EVDEV_UDEV_TAG_KEYBOARD		= bit(1),
+        EVDEV_UDEV_TAG_MOUSE		= bit(2),
+        EVDEV_UDEV_TAG_TOUCHPAD		= bit(3),
+        EVDEV_UDEV_TAG_TOUCHSCREEN	= bit(4),
+        EVDEV_UDEV_TAG_TABLET		= bit(5),
+        EVDEV_UDEV_TAG_JOYSTICK		= bit(6),
+        EVDEV_UDEV_TAG_ACCELEROMETER	= bit(7),
+        EVDEV_UDEV_TAG_TABLET_PAD	= bit(8),
+        EVDEV_UDEV_TAG_POINTINGSTICK	= bit(9),
+        EVDEV_UDEV_TAG_TRACKBALL	= bit(10),
+        EVDEV_UDEV_TAG_SWITCH		= bit(11),
 };
 
 struct evdev_udev_tag_match {
@@ -1828,9 +1828,15 @@ evdev_configure_device(struct evdev_device *device)
 		}
 
 		if (libevdev_has_event_code(evdev, EV_SW, SW_TABLET_MODE)) {
-			device->seat_caps |= EVDEV_DEVICE_SWITCH;
-			device->tags |= EVDEV_TAG_TABLET_MODE_SWITCH;
-			evdev_log_info(device, "device is a switch device\n");
+		    if (evdev_device_has_model_quirk(device,
+				 QUIRK_MODEL_TABLET_MODE_SWITCH_UNRELIABLE))
+			    evdev_log_info(device,
+				"device is an unreliable tablet mode switch.\n");
+		    else
+			    device->tags |= EVDEV_TAG_TABLET_MODE_SWITCH;
+
+		    device->seat_caps |= EVDEV_DEVICE_SWITCH;
+		    evdev_log_info(device, "device is a switch device\n");
 		}
 	}
 
@@ -1960,8 +1966,10 @@ evdev_pre_configure_model_quirks(struct evdev_device *device)
 					 INPUT_PROP_BUTTONPAD);
 
 	/* Touchpad is a clickpad but INPUT_PROP_BUTTONPAD is not set, see
-	 * https://gitlab.freedesktop.org/libinput/libinput/issues/177 */
-	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_T480S_TOUCHPAD))
+	 * https://gitlab.freedesktop.org/libinput/libinput/issues/177 and
+	 * https://gitlab.freedesktop.org/libinput/libinput/issues/234 */
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_T480S_TOUCHPAD) ||
+	    evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_L380_TOUCHPAD))
 		libevdev_enable_property(device->evdev,
 					 INPUT_PROP_BUTTONPAD);
 
@@ -2019,7 +2027,7 @@ libevdev_log_func(const struct libevdev *evdev,
 		  va_list args)
 {
 	struct libinput *libinput = data;
-	enum libinput_log_priority pri = LIBEVDEV_LOG_ERROR;
+	enum libinput_log_priority pri = LIBINPUT_LOG_PRIORITY_ERROR;
 	const char prefix[] = "libevdev: ";
 	char fmt[strlen(format) + strlen(prefix) + 1];
 
@@ -2171,8 +2179,7 @@ evdev_device_create(struct libinput_seat *seat,
 	return device;
 
 err:
-	if (fd >= 0)
-		close_restricted(libinput, fd);
+	close_restricted(libinput, fd);
 	if (device)
 		evdev_device_destroy(device);
 
@@ -2348,8 +2355,7 @@ evdev_read_fuzz_prop(struct evdev_device *device, unsigned int code)
 	if (prop == NULL)
 		return 0;
 
-	rc = safe_atoi(prop, &fuzz);
-	if (rc == -1 || fuzz < 0) {
+	if (safe_atoi(prop, &fuzz) == false || fuzz < 0) {
 		evdev_log_bug_libinput(device,
 				       "invalid LIBINPUT_FUZZ property value: %s\n",
 				       prop);
@@ -2473,7 +2479,7 @@ evdev_is_scrolling(const struct evdev_device *device,
 	assert(axis == LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL ||
 	       axis == LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
 
-	return (device->scroll.direction & AS_MASK(axis)) != 0;
+	return (device->scroll.direction & bit(axis)) != 0;
 }
 
 static inline void
@@ -2483,7 +2489,7 @@ evdev_start_scrolling(struct evdev_device *device,
 	assert(axis == LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL ||
 	       axis == LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
 
-	device->scroll.direction |= AS_MASK(axis);
+	device->scroll.direction |= bit(axis);
 }
 
 void
@@ -2548,9 +2554,9 @@ evdev_post_scroll(struct evdev_device *device,
 		uint32_t axes = device->scroll.direction;
 
 		if (event.y == 0.0)
-			axes &= ~AS_MASK(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+			axes &= ~bit(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
 		if (event.x == 0.0)
-			axes &= ~AS_MASK(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
+			axes &= ~bit(LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
 
 		evdev_notify_axis(device,
 				  time,
@@ -2717,6 +2723,9 @@ evdev_device_remove(struct evdev_device *device)
 	struct libinput_device *dev;
 
 	evdev_log_info(device, "device removed\n");
+
+	libinput_timer_cancel(&device->scroll.timer);
+	libinput_timer_cancel(&device->middlebutton.timer);
 
 	list_for_each(dev, &device->base.seat->devices_list, link) {
 		struct evdev_device *d = evdev_device(dev);

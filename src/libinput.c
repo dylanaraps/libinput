@@ -262,8 +262,7 @@ log_msg_va(struct libinput *libinput,
 	   const char *format,
 	   va_list args)
 {
-	if (libinput->log_handler &&
-	    libinput->log_priority <= priority)
+	if (is_logged(libinput, priority))
 		libinput->log_handler(libinput, priority, format, args);
 }
 
@@ -686,7 +685,7 @@ libinput_event_pointer_has_axis(struct libinput_event_pointer *event,
 	switch (axis) {
 	case LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL:
 	case LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL:
-		return !!(event->axes & AS_MASK(axis));
+		return !!(event->axes & bit(axis));
 	}
 
 	return 0;

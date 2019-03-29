@@ -357,9 +357,6 @@ udev_device_from_devnode(struct libinput *libinput,
 
 	while (dev && !udev_device_get_is_initialized(dev)) {
 		udev_device_unref(dev);
-		msleep(10);
-		dev = udev_device_new_from_devnum(udev, 'c', st.st_rdev);
-
 		count++;
 		if (count > 200) {
 			log_bug_libinput(libinput,
@@ -367,6 +364,8 @@ udev_device_from_devnode(struct libinput *libinput,
 					devnode);
 			return NULL;
 		}
+		msleep(10);
+		dev = udev_device_new_from_devnum(udev, 'c', st.st_rdev);
 	}
 
 	return dev;
@@ -379,6 +378,13 @@ libinput_path_add_device(struct libinput *libinput,
 {
 	struct udev_device *udev_device;
 	struct libinput_device *device;
+
+	if (strlen(path) > PATH_MAX) {
+		log_bug_client(libinput,
+			       "Unexpected path, limited to %d characters.\n",
+			       PATH_MAX);
+		return NULL;
+	}
 
 	if (libinput->interface_backend != &interface_backend) {
 		log_bug_client(libinput, "Mismatching backends.\n");

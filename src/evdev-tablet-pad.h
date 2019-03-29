@@ -21,26 +21,26 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef EVDEV_BUTTONSET_WACOM_H
-#define EVDEV_BUTTONSET_WACOM_H
+#ifndef EVDEV_TABLET_PAD_H
+#define EVDEV_TABLET_PAD_H
 
 #include "evdev.h"
 
 #define LIBINPUT_BUTTONSET_AXIS_NONE 0
 
 enum pad_status {
-	PAD_NONE = 0,
-	PAD_AXES_UPDATED = 1 << 0,
-	PAD_BUTTONS_PRESSED = 1 << 1,
-	PAD_BUTTONS_RELEASED = 1 << 2,
+	PAD_NONE		= 0,
+	PAD_AXES_UPDATED	= bit(0),
+	PAD_BUTTONS_PRESSED	= bit(1),
+	PAD_BUTTONS_RELEASED	= bit(2),
 };
 
 enum pad_axes {
-	PAD_AXIS_NONE = 0,
-	PAD_AXIS_RING1 = 1 << 0,
-	PAD_AXIS_RING2 = 1 << 1,
-	PAD_AXIS_STRIP1 = 1 << 2,
-	PAD_AXIS_STRIP2 = 1 << 3,
+	PAD_AXIS_NONE		= 0,
+	PAD_AXIS_RING1		= bit(0),
+	PAD_AXIS_RING2		= bit(1),
+	PAD_AXIS_STRIP1		= bit(2),
+	PAD_AXIS_STRIP2		= bit(3),
 };
 
 struct button_state {

@@ -788,11 +788,11 @@ enum libinput_event_type {
 	 * LIBINPUT_DEVICE_CAP_TABLET_PAD capability.
 	 *
 	 * This event is not to be confused with the button events emitted
-	 * by tools on a tablet. See @ref LIBINPUT_EVENT_TABLET_TOOL_BUTTON.
+	 * by tools on a tablet (@ref LIBINPUT_EVENT_TABLET_TOOL_BUTTON).
 	 */
 	LIBINPUT_EVENT_TABLET_PAD_BUTTON = 700,
 	/**
-	 * A status change on a tablet ring with the
+	 * A status change on a tablet ring with the @ref
 	 * LIBINPUT_DEVICE_CAP_TABLET_PAD capability.
 	 */
 	LIBINPUT_EVENT_TABLET_PAD_RING,
@@ -2402,7 +2402,7 @@ libinput_event_tablet_tool_get_time_usec(struct libinput_event_tablet_tool *even
  * mapped to an eraser-like virtual tool.
  *
  * If supported by the hardware, a more specific tool id is always
- * available, see * libinput_tablet_tool_get_tool_id().
+ * available, see libinput_tablet_tool_get_tool_id().
  *
  * @param tool The libinput tool
  * @return The tool type for this tool object

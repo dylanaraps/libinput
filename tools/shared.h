@@ -30,6 +30,8 @@
 #include <quirks.h>
 #include <libinput.h>
 
+#define EXIT_INVALID_USAGE 2
+
 enum configuration_options {
 	OPT_TAP_ENABLE = 256,
 	OPT_TAP_DISABLE,
@@ -78,6 +80,7 @@ enum configuration_options {
 	{ "set-speed",                 required_argument, 0, OPT_SPEED }
 
 enum tools_backend {
+	BACKEND_NONE,
 	BACKEND_DEVICE,
 	BACKEND_UDEV
 };
@@ -119,8 +122,5 @@ tools_list_device_quirks(struct quirks_context *ctx,
 			 struct udev_device *device,
 			 void (*callback)(void *userdata, const char *str),
 			 void *userdata);
-
-bool
-tools_execdir_is_builddir(char *execdir_out, size_t sz);
 
 #endif

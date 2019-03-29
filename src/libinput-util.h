@@ -31,7 +31,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#ifdef HAVE_LOCALE_H
 #include <locale.h>
+#endif
 #ifdef HAVE_XLOCALE_H
 #include <xlocale.h>
 #endif
@@ -79,6 +81,7 @@
 
 #define CASE_RETURN_STRING(a) case a: return #a
 
+#define bit(x_) (1UL << (x_))
 /*
  * This list data structure is a verbatim copy from wayland-util.h from the
  * Wayland project; except that wl_ prefix has been removed.
@@ -121,7 +124,6 @@ bool list_empty(const struct list *list);
 #define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
 #define ARRAY_FOR_EACH(_arr, _elem) \
 	for (size_t _i = 0; _i < ARRAY_LENGTH(_arr) && (_elem = &_arr[_i]); _i++)
-#define AS_MASK(v) (1 << (v))
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #define max(a, b) (((a) > (b)) ? (a) : (b))
@@ -559,7 +561,9 @@ safe_atod(const char *str, double *val)
 {
 	char *endptr;
 	double v;
+#ifdef HAVE_LOCALE_H
 	locale_t c_locale;
+#endif
 	size_t slen = strlen(str);
 
 	/* We don't have a use-case where we want to accept hex for a double
@@ -579,6 +583,7 @@ safe_atod(const char *str, double *val)
 		}
 	}
 
+#ifdef HAVE_LOCALE_H
 	/* Create a "C" locale to force strtod to use '.' as separator */
 	c_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
 	if (c_locale == (locale_t)0)
@@ -587,6 +592,11 @@ safe_atod(const char *str, double *val)
 	errno = 0;
 	v = strtod_l(str, &endptr, c_locale);
 	freelocale(c_locale);
+#else
+	/* No locale support in provided libc, assume it already uses '.' */
+	errno = 0;
+	v = strtod(str, &endptr);
+#endif
 	if (errno > 0)
 		return false;
 	if (str == endptr)

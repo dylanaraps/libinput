@@ -1,5 +1,5 @@
-project('libinput', 'c', 'cpp',
-	version : '1.12.6',
+project('libinput', 'c',
+	version : '1.13.0',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
@@ -92,6 +92,14 @@ if cc.has_header('xlocale.h')
 	config_h.set('HAVE_XLOCALE_H', '1')
 endif
 
+code = '''
+#include <locale.h>
+void main(void) { newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); }
+'''
+if cc.links(code, name : 'locale.h')
+	config_h.set('HAVE_LOCALE_H', '1')
+endif
+
 if not cc.has_header_symbol('sys/ptrace.h', 'PTRACE_ATTACH', prefix : prefix)
 	config_h.set('PTRACE_ATTACH', 'PT_ATTACH')
 	config_h.set('PTRACE_CONT', 'PT_CONTINUE')
@@ -102,7 +110,7 @@ endif
 pkgconfig = import('pkgconfig')
 dep_udev = dependency('libudev', required : false)
 dep_mtdev = dependency('mtdev', version : '>= 1.1.0')
-dep_libevdev = dependency('libevdev', version : '>= 0.4')
+dep_libevdev = dependency('libevdev')
 dep_lm = cc.find_library('m', required : false)
 dep_rt = cc.find_library('rt', required : false)
 
@@ -117,22 +125,12 @@ config_h.set10('HAVE_LIBWACOM', have_libwacom)
 if have_libwacom
 	dep_libwacom = dependency('libwacom', version : '>= 0.20')
 
-	code = '''
-	#include <libwacom/libwacom.h>
-	int main(void) { libwacom_get_paired_device(NULL); }
-	'''
-	result = cc.links(code,
-			  name : 'libwacom_get_paired_device check',
-			  dependencies : dep_libwacom)
+	result = cc.has_function('libwacom_get_paired_device',
+				 dependencies: dep_libwacom)
 	config_h.set10('HAVE_LIBWACOM_GET_PAIRED_DEVICE', result)
 
-	code = '''
-	#include <libwacom/libwacom.h>
-	int main(void) { libwacom_get_button_evdev_code(NULL, 'A'); }
-	'''
-	result = cc.links(code,
-			  name : 'libwacom_get_button_evdev_code check',
-			  dependencies : dep_libwacom)
+	result = cc.has_function('libwacom_get_button_evdev_code',
+				 dependencies: dep_libwacom)
 	config_h.set10('HAVE_LIBWACOM_GET_BUTTON_EVDEV_CODE', result)
 else
 	dep_libwacom = declare_dependency()
@@ -282,6 +280,7 @@ install_data(quirks_data, install_dir : dir_data)
 src_libquirks = [
 	'src/quirks.c',
 	'src/quirks.h',
+	'src/builddir.h',
 ]
 
 deps_libquirks = [dep_udev, dep_libinput_util]
@@ -394,7 +393,8 @@ endif
 libinput_tool_path = dir_libexec
 config_h.set_quoted('LIBINPUT_TOOL_PATH', libinput_tool_path)
 tools_shared_sources = [ 'tools/shared.c',
-			 'tools/shared.h' ]
+			 'tools/shared.h',
+			 'src/builddir.h' ]
 deps_tools_shared = [ dep_libinput, dep_libevdev ]
 lib_tools_shared = static_library('tools_shared',
 				  tools_shared_sources,
@@ -405,6 +405,7 @@ dep_tools_shared = declare_dependency(link_with : lib_tools_shared,
 
 man_config = configuration_data()
 man_config.set('LIBINPUT_VERSION', meson.project_version())
+man_config.set('LIBINPUT_DATA_DIR', dir_data)
 
 deps_tools = [ dep_tools_shared, dep_libinput ]
 libinput_debug_events_sources = [ 'tools/libinput-debug-events.c' ]
@@ -577,12 +578,12 @@ endif
 
 libinput_sources = [ 'tools/libinput-tool.c' ]
 
-executable('libinput',
-	   libinput_sources,
-	   dependencies : deps_tools,
-	   include_directories : [includes_src, includes_include],
-	   install : true
-	   )
+libinput_tool = executable('libinput',
+			   libinput_sources,
+			   dependencies : deps_tools,
+			   include_directories : [includes_src, includes_include],
+			   install : true
+			  )
 configure_file(input : 'tools/libinput.man',
 	       output : 'libinput.1',
 	       configuration : man_config,
@@ -598,11 +599,20 @@ executable('ptraccel-debug',
 	   install : false
 	   )
 
+# Don't run the test during a release build because we rely on the magic
+# subtool lookup
+if get_option('buildtype') == 'debug' or get_option('buildtype') == 'debugoptimized'
+	test('tool-option-parsing',
+	     find_program('tools/test-tool-option-parsing.py'),
+	     args : ['--tool-path', libinput_tool.full_path()],
+	     timeout : 120)
+endif
+
 # the libinput tools check whether we execute from the builddir, this is
 # the test to verify that lookup. We test twice, once as normal test
 # run from the builddir, once after copying to /tmp
 test_builddir_lookup = executable('test-builddir-lookup',
-				  'tools/test-builddir-lookup.c',
+				  'test/test-builddir-lookup.c',
 				  dependencies : [ dep_tools_shared],
 				  include_directories : [includes_src, includes_include],
 				  install : false)
@@ -610,7 +620,7 @@ test('tools-builddir-lookup',
      test_builddir_lookup,
      args : ['--builddir-is-set'])
 test('tools-builddir-lookup-installed',
-     find_program('tools/helper-copy-and-exec-from-tmp.sh'),
+     find_program('test/helper-copy-and-exec-from-tmp.sh'),
      args : [test_builddir_lookup.full_path(), '--builddir-is-null'],
      env : ['LD_LIBRARY_PATH=@0@'.format(meson.build_root())],
      workdir : '/tmp')
@@ -633,7 +643,7 @@ executable('test-build-std-gnuc90',
 	   'test/build-pedantic.c',
 	   dependencies : [dep_udev],
 	   include_directories : [includes_src, includes_include],
-	   c_args : ['-std=gnu90', '-Werror'],
+	   c_args : ['-std=gnu89', '-Werror'],
 	   install : false)
 # test for linking with the minimal linker flags
 executable('test-build-linker',
@@ -641,18 +651,19 @@ executable('test-build-linker',
 	   include_directories : [includes_src, includes_include],
 	   dependencies : [ dep_libinput, dep_libinput_util ],
 	   install : false)
-# test including from C++
-executable('test-build-cxx',
-	   'test/build-cxx.cc',
-	   dependencies : [dep_udev],
-	   include_directories : [includes_src, includes_include],
-	   install : false)
+# test including from C++ (in case CPP compiler is available)
+if add_languages('cpp', required: false)
+	executable('test-build-cxx',
+		   'test/build-cxx.cc',
+		   dependencies : [dep_udev],
+		   include_directories : [includes_src, includes_include],
+		   install : false)
+endif
 
 # This is the test suite runner, we allow disabling that one because of
 # dependencies
 if get_option('tests')
 	dep_check = dependency('check', version : '>= 0.9.10')
-	valgrind = find_program('valgrind')
 
 	leftover_rules = find_program('test/check-leftover-udev-rules.sh')
 	test('leftover-rules', leftover_rules, is_parallel : false)
@@ -731,6 +742,9 @@ if get_option('tests')
 		'test/litest-device-wacom-cintiq-13hdt-pen.c',
 		'test/litest-device-wacom-cintiq-24hd-pen.c',
 		'test/litest-device-wacom-cintiq-24hdt-pad.c',
+		'test/litest-device-wacom-cintiq-pro-16-finger.c',
+		'test/litest-device-wacom-cintiq-pro-16-pad.c',
+		'test/litest-device-wacom-cintiq-pro-16-pen.c',
 		'test/litest-device-wacom-ekr.c',
 		'test/litest-device-wacom-hid4800-pen.c',
 		'test/litest-device-wacom-intuos3-pad.c',
@@ -760,16 +774,10 @@ if get_option('tests')
 		dep_libquirks,
 	]
 
-	configure_file(input : 'udev/80-libinput-test-device.rules',
-		       output : '80-libinput-test-device.rules',
-		       install : false,
-		       configuration : udev_rules_config)
-
-	config_h.set_quoted('LIBINPUT_TEST_DEVICE_RULES_FILE',
-			    join_paths(meson.build_root(), '80-libinput-test-device.rules'))
-	config_h.set_quoted('LIBINPUT_DEVICE_GROUPS_RULES_FILE',
+	litest_config_h = configuration_data()
+	litest_config_h.set_quoted('LIBINPUT_DEVICE_GROUPS_RULES_FILE',
 			    join_paths(meson.build_root(), '80-libinput-device-groups.rules'))
-	config_h.set_quoted('LIBINPUT_MODEL_QUIRKS_UDEV_RULES_FILE',
+	litest_config_h.set_quoted('LIBINPUT_MODEL_QUIRKS_UDEV_RULES_FILE',
 			    join_paths(meson.build_root(), '90-libinput-model-quirks.rules'))
 
 	def_no_main = '-DLITEST_NO_MAIN'
@@ -790,6 +798,25 @@ if get_option('tests')
 					  c_args : defs_litest_selftest,
 					  install : false)
 	test('test-litest-selftest', test_litest_selftest)
+
+	def_LT_VERSION = '-DLIBINPUT_LT_VERSION="@0@:@1@:@2@"'.format(libinput_lt_c, libinput_lt_r, libinput_lt_a)
+	test_library_version = executable('test-library-version',
+					  ['test/test-library-version.c'],
+					  c_args : [ def_LT_VERSION ],
+					  install : false)
+	test('test-library-version', test_library_version)
+
+	test_utils_sources = [
+		'src/libinput-util.h',
+		'src/libinput-util.c',
+		'test/test-utils.c',
+	]
+	test_utils = executable('test-utils',
+				test_utils_sources,
+				include_directories : [includes_src, includes_include],
+				dependencies : deps_litest,
+				install: false)
+	test('test-utils', test_utils)
 
 	libinput_test_runner_sources = litest_sources + [
 		'src/libinput-util.h',
@@ -813,13 +840,19 @@ if get_option('tests')
 		'test/test-switch.c',
 		'test/test-quirks.c',
 	]
-	def_LT_VERSION = '-DLIBINPUT_LT_VERSION="@0@:@1@:@2@"'.format(libinput_lt_c, libinput_lt_r, libinput_lt_a)
-	libinput_test_runner = executable('libinput-test-suite-runner',
+	libinput_test_runner = executable('libinput-test-suite',
 					  libinput_test_runner_sources,
 					  include_directories : [includes_src, includes_include],
 					  dependencies : deps_litest,
-					  c_args : [ def_LT_VERSION ],
-					  install : false)
+					  install_dir : libinput_tool_path,
+					  install : get_option('install-tests'))
+	configure_file(input : 'test/libinput-test-suite.man',
+		       output : 'libinput-test-suite.1',
+		       configuration : man_config,
+		       install : true,
+		       install_dir : dir_man1,
+		       )
+
 	test('libinput-test-suite-runner',
 	     libinput_test_runner,
 	     timeout : 1200)
@@ -828,18 +861,26 @@ if get_option('tests')
 	     libinput_test_runner,
 	     args: ['--filter-deviceless'])
 
-	valgrind_env = environment()
-	valgrind_env.set('CK_FORK', 'no')
-	valgrind_env.set('USING_VALGRIND', '1')
-	valgrind_suppressions_file = join_paths(dir_src_test, 'valgrind.suppressions')
-	add_test_setup('valgrind',
-			exe_wrapper : [ valgrind,
-					'--leak-check=full',
-					'--gen-suppressions=all',
-					'--error-exitcode=3',
-					'--suppressions=' + valgrind_suppressions_file ],
-			env :  valgrind_env,
-			timeout_multiplier : 100)
+	valgrind = find_program('valgrind', required : false)
+	if valgrind.found()
+		valgrind_env = environment()
+		valgrind_env.set('CK_FORK', 'no')
+		valgrind_env.set('USING_VALGRIND', '1')
+		valgrind_suppressions_file = join_paths(dir_src_test, 'valgrind.suppressions')
+		add_test_setup('valgrind',
+				exe_wrapper : [ valgrind,
+						'--leak-check=full',
+						'--gen-suppressions=all',
+						'--error-exitcode=3',
+						'--suppressions=' + valgrind_suppressions_file ],
+				env :  valgrind_env,
+				timeout_multiplier : 100)
+	else
+		message('valgrind not found, disabling valgrind test suite')
+	endif
+	configure_file(output : 'litest-config.h',
+		       install : false,
+		       configuration : litest_config_h)
 endif
 ############ output files ############
 configure_file(output : 'config.h', install : false, configuration : config_h)
