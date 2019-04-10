@@ -1,5 +1,5 @@
 project('libinput', 'c',
-	version : '1.13.0',
+	version : '1.13.1',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
@@ -258,8 +258,8 @@ quirks_data = [
 	'quirks/30-vendor-microsoft.quirks',
 	'quirks/30-vendor-razer.quirks',
 	'quirks/30-vendor-synaptics.quirks',
-	'quirks/30-vendor-wacom.quirks',
 	'quirks/30-vendor-vmware.quirks',
+	'quirks/30-vendor-wacom.quirks',
 	'quirks/50-system-acer.quirks',
 	'quirks/50-system-apple.quirks',
 	'quirks/50-system-asus.quirks',
@@ -270,7 +270,12 @@ quirks_data = [
 	'quirks/50-system-hp.quirks',
 	'quirks/50-system-lenovo.quirks',
 	'quirks/50-system-system76.quirks',
+	'quirks/50-system-toshiba.quirks',
 ]
+
+test('quirks-in-meson.build',
+     find_program('quirks/test-quirks-in-meson.build.sh'),
+     args : [meson.source_root()])
 
 config_h.set_quoted('LIBINPUT_QUIRKS_FILES', ':'.join(quirks_data))
 config_h.set_quoted('LIBINPUT_QUIRKS_SRCDIR', dir_src_quirks)
