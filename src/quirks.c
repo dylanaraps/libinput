@@ -290,7 +290,7 @@ matchflagname(enum match_flags f)
 	default:
 		abort();
 	}
-};
+}
 
 static inline struct property *
 property_new(void)
@@ -310,7 +310,7 @@ property_ref(struct property *p)
 	assert(p->refcount > 0);
 	p->refcount++;
 	return p;
-};
+}
 
 static inline struct property *
 property_unref(struct property *p)
@@ -321,7 +321,7 @@ property_unref(struct property *p)
 	p->refcount--;
 
 	return NULL;
-};
+}
 
 /* Separate call so we can verify that the caller unrefs the property
  * before shutting down the subsystem.
