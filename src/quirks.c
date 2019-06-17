@@ -290,7 +290,7 @@ matchflagname(enum match_flags f)
 	default:
 		abort();
 	}
-};
+}
 
 static inline struct property *
 property_new(void)
@@ -310,7 +310,7 @@ property_ref(struct property *p)
 	assert(p->refcount > 0);
 	p->refcount++;
 	return p;
-};
+}
 
 static inline struct property *
 property_unref(struct property *p)
@@ -321,7 +321,7 @@ property_unref(struct property *p)
 	p->refcount--;
 
 	return NULL;
-};
+}
 
 /* Separate call so we can verify that the caller unrefs the property
  * before shutting down the subsystem.
@@ -716,8 +716,8 @@ parse_attr(struct quirks_context *ctx,
 		p->value.s = safe_strdup(value);
 		rc = true;
 	} else if (streq(key, quirk_get_name(QUIRK_ATTR_EVENT_CODE_DISABLE))) {
-		size_t nevents = 32;
-		struct input_event events[nevents];
+		struct input_event events[32];
+		size_t nevents = ARRAY_LENGTH(events);
 		p->id = QUIRK_ATTR_EVENT_CODE_DISABLE;
 		if (!parse_evcode_property(value, events, &nevents) ||
 		    nevents == 0)
@@ -892,8 +892,13 @@ parse_file(struct quirks_context *ctx, const char *path)
 			section = section_new(path, line);
 			list_append(&ctx->sections, &section->link);
 			break;
-		/* entries must start with A-Z */
-		case 'A'...'Z':
+		default:
+			/* entries must start with A-Z */
+			if (line[0] < 'A' && line[0] > 'Z') {
+				qlog_parser(ctx, "%s:%d: Unexpected line %s\n",
+						 path, lineno, line);
+				goto out;
+			}
 			switch (state) {
 			case STATE_SECTION:
 				qlog_parser(ctx, "%s:%d: expected [Section], got %s\n",
@@ -928,10 +933,6 @@ parse_file(struct quirks_context *ctx, const char *path)
 				goto out;
 			}
 			break;
-		default:
-			qlog_parser(ctx, "%s:%d: Unexpected line %s\n",
-					 path, lineno, line);
-			goto out;
 		}
 	}
 
