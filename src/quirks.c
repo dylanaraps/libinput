@@ -260,6 +260,7 @@ quirk_get_name(enum quirk q)
 	case QUIRK_ATTR_PALM_SIZE_THRESHOLD:		return "AttrPalmSizeThreshold";
 	case QUIRK_ATTR_LID_SWITCH_RELIABILITY:		return "AttrLidSwitchReliability";
 	case QUIRK_ATTR_KEYBOARD_INTEGRATION:		return "AttrKeyboardIntegration";
+	case QUIRK_ATTR_TRACKPOINT_INTEGRATION:		return "AttrPointingStickIntegration";
 	case QUIRK_ATTR_TPKBCOMBO_LAYOUT:		return "AttrTPKComboLayout";
 	case QUIRK_ATTR_PRESSURE_RANGE:			return "AttrPressureRange";
 	case QUIRK_ATTR_PALM_PRESSURE_THRESHOLD:	return "AttrPalmPressureThreshold";
@@ -643,6 +644,13 @@ parse_attr(struct quirks_context *ctx,
 		rc = true;
 	} else if (streq(key, quirk_get_name(QUIRK_ATTR_KEYBOARD_INTEGRATION))) {
 		p->id = QUIRK_ATTR_KEYBOARD_INTEGRATION;
+		if (!streq(value, "internal") && !streq(value, "external"))
+			goto out;
+		p->type = PT_STRING;
+		p->value.s = safe_strdup(value);
+		rc = true;
+	} else if (streq(key, quirk_get_name(QUIRK_ATTR_TRACKPOINT_INTEGRATION))) {
+		p->id = QUIRK_ATTR_TRACKPOINT_INTEGRATION;
 		if (!streq(value, "internal") && !streq(value, "external"))
 			goto out;
 		p->type = PT_STRING;
@@ -1220,6 +1228,7 @@ match_fill_udev_type(struct match *m,
 		{ "ID_INPUT_TABLET_PAD", UDEV_TABLET_PAD },
 		{ "ID_INPUT_JOYSTICK", UDEV_JOYSTICK },
 		{ "ID_INPUT_KEYBOARD", UDEV_KEYBOARD },
+		{ "ID_INPUT_KEY", UDEV_KEYBOARD },
 	};
 	struct ut_map *map;
 

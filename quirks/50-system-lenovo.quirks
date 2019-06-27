@@ -20,6 +20,11 @@ MatchName=Synaptics tm2964-001
 MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadT440p*
 ModelLenovoT450Touchpad=1
 
+[Lenovo T480 Trackpoint]
+MatchName=*TPPS/2 IBM TrackPoint
+MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadT480:*
+AttrTrackpointMultiplier=0.4
+
 [Lenovo T480s Touchpad]
 MatchName=Elan Touchpad
 MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadT480s*
@@ -39,6 +44,11 @@ AttrTrackpointMultiplier=1.25
 MatchName=*TPPS/2 IBM TrackPoint
 MatchDMIModalias=dmi:*svnLENOVO:*pvrThinkPadX20??:*
 AttrTrackpointMultiplier=1.25
+
+[Lenovo X230 Trackpoint]
+MatchName=*TPPS/2 IBM TrackPoint
+MatchDMIModalias=dmi:*svnLENOVO:*pvrThinkPadX230:*
+AttrTrackpointMultiplier=0.25
 
 [Lenovo P50 Touchpad]
 MatchName=SynPS/2 Synaptics TouchPad
@@ -76,12 +86,19 @@ MatchName=*TPPS/2 Elan TrackPoint*
 MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadX1Carbon6th*
 AttrTrackpointMultiplier=0.4
 
-[Lenovo ThinkPad Compact USB Keyboard with TrackPoint]
+[Lenovo ThinkPad Compact USB Keyboard with TrackPoint (keyboard)]
 MatchUdevType=keyboard
 MatchBus=usb
 MatchVendor=0x17EF
 MatchProduct=0x6047
 AttrKeyboardIntegration=external
+
+[Lenovo ThinkPad Compact USB Keyboard with TrackPoint (trackpoint)]
+MatchUdevType=pointingstick
+MatchBus=usb
+MatchVendor=0x17EF
+MatchProduct=0x6047
+AttrPointingStickIntegration=external
 
 # Lenovo Thinkpad Yoga (not the consumer versions) disables the keyboard
 # mechanically. We must not disable the keyboard because some keys are
@@ -91,6 +108,11 @@ AttrKeyboardIntegration=external
 MatchName=AT Translated Set 2 keyboard
 MatchDMIModalias=dmi:*svnLENOVO:*pvrThinkPad*Yoga*:*
 ModelTabletModeNoSuspend=1
+
+[Lenovo X1 Yoga Trackpoint 1st gen]
+MatchName=*TPPS/2 IBM TrackPoint
+MatchDMIModalias=dmi:*svnLENOVO:*:pvrThinkPadX1Yoga1st:*
+AttrTrackpointMultiplier=1.25
 
 # Lenovo Carbon X1 6th gen (RMI4 only, PS/2 is broken on this device,
 # sends bogus ABS_MT_TOOL_TYPE events for MT_TOOL_PALM
