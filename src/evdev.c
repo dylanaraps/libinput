@@ -31,6 +31,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#ifndef major
+#include <sys/sysmacros.h>
+#endif
 #include "linux/input.h"
 #include <unistd.h>
 #include <fcntl.h>
