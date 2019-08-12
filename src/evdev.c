@@ -56,7 +56,7 @@
 #define INPUT_MAJOR 13
 
 #define DEFAULT_WHEEL_CLICK_ANGLE 15
-#define DEFAULT_BUTTON_SCROLL_TIMEOUT ms2us(38)
+#define DEFAULT_BUTTON_SCROLL_TIMEOUT ms2us(200)
 
 enum evdev_device_udev_tags {
         EVDEV_UDEV_TAG_INPUT		= bit(0),
@@ -399,10 +399,34 @@ static void
 evdev_tag_trackpoint(struct evdev_device *device,
 		     struct udev_device *udev_device)
 {
-	if (libevdev_has_property(device->evdev,
-				  INPUT_PROP_POINTING_STICK) ||
-	    parse_udev_flag(device, udev_device, "ID_INPUT_POINTINGSTICK"))
-		device->tags |= EVDEV_TAG_TRACKPOINT;
+	struct quirks_context *quirks;
+	struct quirks *q;
+	char *prop;
+
+	if (!libevdev_has_property(device->evdev,
+				  INPUT_PROP_POINTING_STICK) &&
+	    !parse_udev_flag(device, udev_device, "ID_INPUT_POINTINGSTICK"))
+		return;
+
+	device->tags |= EVDEV_TAG_TRACKPOINT;
+
+	quirks = evdev_libinput_context(device)->quirks;
+	q = quirks_fetch_for_device(quirks, device->udev_device);
+	if (q && quirks_get_string(q, QUIRK_ATTR_TRACKPOINT_INTEGRATION, &prop)) {
+		if (streq(prop, "internal")) {
+			/* noop, this is the default anyway */
+		} else if (streq(prop, "external")) {
+			device->tags |= EVDEV_TAG_EXTERNAL_MOUSE;
+			evdev_log_info(device,
+				       "is an external pointing stick\n");
+		} else {
+			evdev_log_info(device,
+				       "tagged with unknown value %s\n",
+				       prop);
+		}
+	}
+
+	quirks_unref(q);
 }
 
 static inline void
@@ -1625,7 +1649,8 @@ evdev_reject_device(struct evdev_device *device)
 }
 
 static void
-evdev_extract_abs_axes(struct evdev_device *device)
+evdev_extract_abs_axes(struct evdev_device *device,
+		       enum evdev_device_udev_tags udev_tags)
 {
 	struct libevdev *evdev = device->evdev;
 	int fuzz;
@@ -1637,10 +1662,12 @@ evdev_extract_abs_axes(struct evdev_device *device)
 	if (evdev_fix_abs_resolution(device, ABS_X, ABS_Y))
 		device->abs.is_fake_resolution = true;
 
-	if ((fuzz = evdev_read_fuzz_prop(device, ABS_X)))
-	    libevdev_set_abs_fuzz(evdev, ABS_X, fuzz);
-	if ((fuzz = evdev_read_fuzz_prop(device, ABS_Y)))
-	    libevdev_set_abs_fuzz(evdev, ABS_Y, fuzz);
+	if (udev_tags & (EVDEV_UDEV_TAG_TOUCHPAD|EVDEV_UDEV_TAG_TOUCHSCREEN)) {
+		fuzz = evdev_read_fuzz_prop(device, ABS_X);
+		libevdev_set_abs_fuzz(evdev, ABS_X, fuzz);
+		fuzz = evdev_read_fuzz_prop(device, ABS_Y);
+		libevdev_set_abs_fuzz(evdev, ABS_Y, fuzz);
+	}
 
 	device->abs.absinfo_x = libevdev_get_abs_info(evdev, ABS_X);
 	device->abs.absinfo_y = libevdev_get_abs_info(evdev, ABS_Y);
@@ -1745,10 +1772,18 @@ evdev_configure_device(struct evdev_device *device)
 		evdev_fix_android_mt(device);
 
 	if (libevdev_has_event_code(evdev, EV_ABS, ABS_X)) {
-		evdev_extract_abs_axes(device);
+		evdev_extract_abs_axes(device, udev_tags);
 
 		if (evdev_is_fake_mt_device(device))
 			udev_tags &= ~EVDEV_UDEV_TAG_TOUCHSCREEN;
+	}
+
+	if (evdev_device_has_model_quirk(device,
+					 QUIRK_MODEL_DELL_CANVAS_TOTEM)) {
+		dispatch = evdev_totem_create(device);
+		device->seat_caps |= EVDEV_DEVICE_TABLET;
+		evdev_log_info(device, "device is a totem\n");
+		return dispatch;
 	}
 
 	/* libwacom assigns touchpad (or touchscreen) _and_ tablet to the
@@ -2254,6 +2289,9 @@ evdev_device_calibrate(struct evdev_device *device,
 	matrix_from_farray6(&transform, calibration);
 	device->abs.apply_calibration = !matrix_is_identity(&transform);
 
+	/* back up the user matrix so we can return it on request */
+	matrix_from_farray6(&device->abs.usermatrix, calibration);
+
 	if (!device->abs.apply_calibration) {
 		matrix_init_identity(&device->abs.calibration);
 		return;
@@ -2281,9 +2319,6 @@ evdev_device_calibrate(struct evdev_device *device,
 	 * Matrix maths requires the normalize/un-normalize in reverse
 	 * order.
 	 */
-
-	/* back up the user matrix so we can return it on request */
-	matrix_from_farray6(&device->abs.usermatrix, calibration);
 
 	/* Un-Normalize */
 	matrix_init_translate(&translate,
@@ -2346,6 +2381,7 @@ evdev_read_fuzz_prop(struct evdev_device *device, unsigned int code)
 	char name[32];
 	int rc;
 	int fuzz = 0;
+	const struct input_absinfo *abs;
 
 	rc = snprintf(name, sizeof(name), "LIBINPUT_FUZZ_%02x", code);
 	if (rc == -1)
@@ -2356,17 +2392,37 @@ evdev_read_fuzz_prop(struct evdev_device *device, unsigned int code)
 #else
 	prop = NULL;
 #endif
-	if (prop == NULL)
-		return 0;
-
-	if (safe_atoi(prop, &fuzz) == false || fuzz < 0) {
+	if (prop && (safe_atoi(prop, &fuzz) == false || fuzz < 0)) {
 		evdev_log_bug_libinput(device,
 				       "invalid LIBINPUT_FUZZ property value: %s\n",
 				       prop);
 		return 0;
 	}
 
-	return fuzz;
+	/* The udev callout should have set the kernel fuzz to zero.
+	 * If the kernel fuzz is nonzero, something has gone wrong there, so
+	 * let's complain but still use a fuzz of zero for our view of the
+	 * device. Otherwise, the kernel will use the nonzero fuzz, we then
+	 * use the same fuzz on top of the pre-fuzzed data and that leads to
+	 * unresponsive behaviur.
+	 */
+	abs = libevdev_get_abs_info(device->evdev, code);
+	if (!abs || abs->fuzz == 0)
+		return fuzz;
+
+	if (prop) {
+		evdev_log_bug_libinput(device,
+				       "kernel fuzz of %d even with LIBINPUT_FUZZ_%02x present\n",
+				       abs->fuzz,
+				       code);
+	} else {
+		evdev_log_bug_libinput(device,
+				       "kernel fuzz of %d but LIBINPUT_FUZZ_%02x is missing\n",
+				       abs->fuzz,
+				       code);
+	}
+
+	return 0;
 }
 
 bool
@@ -2784,16 +2840,14 @@ evdev_tablet_has_left_handed(struct evdev_device *device)
 {
 	bool has_left_handed = false;
 #if HAVE_LIBWACOM
-	WacomDeviceDatabase *db;
+	struct libinput *li = evdev_libinput_context(device);
+	WacomDeviceDatabase *db = NULL;
 	WacomDevice *d = NULL;
 	WacomError *error;
 
-	db = libwacom_database_new();
-	if (!db) {
-		evdev_log_info(device,
-			       "failed to initialize libwacom context.\n");
+	db = libinput_libwacom_ref(li);
+	if (!db)
 		goto out;
-	}
 
 	error = libwacom_error_new();
 
@@ -2819,7 +2873,8 @@ evdev_tablet_has_left_handed(struct evdev_device *device)
 		libwacom_error_free(&error);
 	if (d)
 		libwacom_destroy(d);
-	libwacom_database_destroy(db);
+	if (db)
+		libinput_libwacom_unref(li);
 
 out:
 #endif

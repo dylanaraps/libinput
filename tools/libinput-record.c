@@ -45,6 +45,7 @@
 #include "libinput-version.h"
 #include "libinput-git-version.h"
 #include "shared.h"
+#include "builddir.h"
 
 static const int FILE_VERSION_NUMBER = 1;
 
@@ -229,7 +230,7 @@ print_evdev_event(struct record_context *ctx, struct input_event *ev)
 
 		snprintf(desc,
 			 sizeof(desc),
-			 "%s / %-20s %4d%s",
+			 "%s / %-20s %6d%s",
 			 tname,
 			 cname,
 			 ev->value,
@@ -237,7 +238,7 @@ print_evdev_event(struct record_context *ctx, struct input_event *ev)
 	}
 
 	iprintf(ctx,
-		"- [%3lu, %6u, %3d, %3d, %5d] # %s\n",
+		"- [%3lu, %6u, %3d, %3d, %6d] # %s\n",
 		ev->time.tv_sec,
 		(unsigned int)ev->time.tv_usec,
 		ev->type,
@@ -1735,9 +1736,18 @@ print_device_quirks(struct record_context *ctx, struct record_device *dev)
 	struct quirks_context *quirks;
 	const char *data_path = LIBINPUT_QUIRKS_DIR;
 	const char *override_file = LIBINPUT_QUIRKS_OVERRIDE_FILE;
+	char *builddir = NULL;
 
 	if (stat(dev->devnode, &st) < 0)
 		return;
+
+	if ((builddir = builddir_lookup())) {
+		setenv("LIBINPUT_QUIRKS_DIR", LIBINPUT_QUIRKS_SRCDIR, 0);
+		data_path = LIBINPUT_QUIRKS_SRCDIR;
+		override_file = NULL;
+	}
+
+	free(builddir);
 
 	quirks = quirks_init_subsystem(data_path,
 				       override_file,
@@ -1769,6 +1779,7 @@ print_device_quirks(struct record_context *ctx, struct record_device *dev)
 out:
 	udev_device_unref(udev_device);
 	udev_unref(udev);
+	quirks_context_unref(quirks);
 }
 static inline void
 print_libinput_description(struct record_context *ctx,
@@ -2452,7 +2463,8 @@ main(int argc, char **argv)
 	rc = mainloop(&ctx);
 out:
 	list_for_each_safe(d, tmp, &ctx.devices, link) {
-		libinput_device_unref(d->device);
+		if (d->device)
+			libinput_device_unref(d->device);
 		free(d->events);
 		free(d->devnode);
 		libevdev_free(d->evdev);

@@ -38,13 +38,14 @@ enum tablet_status {
 	TABLET_AXES_UPDATED		= bit(0),
 	TABLET_BUTTONS_PRESSED		= bit(1),
 	TABLET_BUTTONS_RELEASED		= bit(2),
-	TABLET_TOOL_IN_CONTACT		= bit(3),
-	TABLET_TOOL_LEAVING_PROXIMITY	= bit(4),
-	TABLET_TOOL_OUT_OF_PROXIMITY	= bit(5),
-	TABLET_TOOL_ENTERING_PROXIMITY	= bit(6),
-	TABLET_TOOL_ENTERING_CONTACT	= bit(7),
-	TABLET_TOOL_LEAVING_CONTACT	= bit(8),
-	TABLET_TOOL_OUT_OF_RANGE	= bit(9),
+	TABLET_TOOL_UPDATED		= bit(3),
+	TABLET_TOOL_IN_CONTACT		= bit(4),
+	TABLET_TOOL_LEAVING_PROXIMITY	= bit(5),
+	TABLET_TOOL_OUT_OF_PROXIMITY	= bit(6),
+	TABLET_TOOL_ENTERING_PROXIMITY	= bit(7),
+	TABLET_TOOL_ENTERING_CONTACT	= bit(8),
+	TABLET_TOOL_LEAVING_CONTACT	= bit(9),
+	TABLET_TOOL_OUT_OF_RANGE	= bit(10),
 };
 
 struct button_state {
@@ -74,9 +75,14 @@ struct tablet_dispatch {
 	struct button_state button_state;
 	struct button_state prev_button_state;
 
-	enum libinput_tablet_tool_type current_tool_type;
-	uint32_t current_tool_id;
-	uint32_t current_tool_serial;
+	uint32_t tool_state;
+	uint32_t prev_tool_state;
+
+	struct {
+		enum libinput_tablet_tool_type type;
+		uint32_t id;
+		uint32_t serial;
+	} current_tool;
 
 	uint32_t cursor_proximity_threshold;
 
@@ -87,13 +93,19 @@ struct tablet_dispatch {
 	enum evdev_arbitration_state arbitration;
 
 	struct {
+		/* The device locked for rotation */
+		struct evdev_device *touch_device;
+		/* Last known left-handed state of the touchpad */
+		bool touch_device_left_handed_state;
+		bool rotate;
+		bool want_rotate;
+	} rotation;
+
+	struct {
 		bool need_to_force_prox_out;
 		struct libinput_timer prox_out_timer;
 		bool proximity_out_forced;
 		uint64_t last_event_time;
-
-		/* true while injecting BTN_TOOL_PEN events */
-		bool proximity_out_in_progress;
 	} quirks;
 };
 
@@ -189,6 +201,12 @@ axis_to_evcode(const enum libinput_tablet_tool_axis axis)
 		break;
 	case LIBINPUT_TABLET_TOOL_AXIS_SLIDER:
 		evcode = ABS_WHEEL;
+		break;
+	case LIBINPUT_TABLET_TOOL_AXIS_SIZE_MAJOR:
+		evcode = ABS_MT_TOUCH_MAJOR;
+		break;
+	case LIBINPUT_TABLET_TOOL_AXIS_SIZE_MINOR:
+		evcode = ABS_MT_TOUCH_MINOR;
 		break;
 	default:
 		abort();

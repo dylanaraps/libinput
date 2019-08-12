@@ -42,16 +42,6 @@ static int events[] = {
 	-1 , -1,
 };
 
-static const char udev_rule[] =
-"ACTION==\"remove\", GOTO=\"touchpad_end\"\n"
-"KERNEL!=\"event*\", GOTO=\"touchpad_end\"\n"
-"ENV{ID_INPUT_TOUCHPAD}==\"\", GOTO=\"touchpad_end\"\n"
-"\n"
-"ATTRS{name}==\"litest Low DPI Mouse*\",\\\n"
-"    ENV{MOUSE_DPI}=\"400@125\"\n"
-"\n"
-"LABEL=\"touchpad_end\"";
-
 TEST_DEVICE("low-dpi-mouse",
 	.type = LITEST_MOUSE_LOW_DPI,
 	.features = LITEST_RELATIVE | LITEST_BUTTON | LITEST_WHEEL,
@@ -61,5 +51,8 @@ TEST_DEVICE("low-dpi-mouse",
 	.id = &input_id,
 	.absinfo = NULL,
 	.events = events,
-	.udev_rule = udev_rule,
+	.udev_properties = {
+		{ "MOUSE_DPI", "400@125" },
+		{ NULL },
+	},
 )

@@ -29,6 +29,10 @@
 #include "libinput-util.h"
 #include "litest.h"
 
+enum cardinal {
+	N, NE, E, SE, S, SW, W, NW, NCARDINALS
+};
+
 START_TEST(gestures_cap)
 {
 	struct litest_device *dev = litest_current_device();
@@ -62,7 +66,7 @@ START_TEST(gestures_swipe_3fg)
 	double dx, dy;
 	int cardinal = _i; /* ranged test */
 	double dir_x, dir_y;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -161,7 +165,7 @@ START_TEST(gestures_swipe_3fg_btntool)
 	double dx, dy;
 	int cardinal = _i; /* ranged test */
 	double dir_x, dir_y;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -173,6 +177,7 @@ START_TEST(gestures_swipe_3fg_btntool)
 	};
 
 	if (libevdev_get_num_slots(dev->evdev) > 2 ||
+	    !libevdev_has_event_code(dev->evdev, EV_KEY, BTN_TOOL_TRIPLETAP) ||
 	    !libinput_device_has_capability(dev->libinput_device,
 					    LIBINPUT_DEVICE_CAP_GESTURE))
 		return;
@@ -263,7 +268,7 @@ START_TEST(gestures_swipe_4fg)
 	double dx, dy;
 	int cardinal = _i; /* ranged test */
 	double dir_x, dir_y;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 3 },
 		{ 3, 3 },
 		{ 3, 0 },
@@ -390,7 +395,7 @@ START_TEST(gestures_swipe_4fg_btntool)
 	double dx, dy;
 	int cardinal = _i; /* ranged test */
 	double dir_x, dir_y;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -484,58 +489,6 @@ START_TEST(gestures_swipe_4fg_btntool)
 }
 END_TEST
 
-START_TEST(gestures_pinch_vertical_position)
-{
-	struct litest_device *dev = litest_current_device();
-	struct libinput *li = dev->libinput;
-	struct libinput_event *event;
-	int nfingers = _i; /* ranged test */
-
-	if (libevdev_get_num_slots(dev->evdev) < nfingers ||
-	    !libinput_device_has_capability(dev->libinput_device,
-					    LIBINPUT_DEVICE_CAP_GESTURE))
-		return;
-
-	litest_disable_tap(dev->libinput_device);
-	litest_drain_events(li);
-
-	litest_touch_down(dev, 0, 40, 30);
-	litest_touch_down(dev, 1, 50, 70);
-	litest_touch_down(dev, 2, 60, 70);
-	if (nfingers > 3)
-		litest_touch_down(dev, 3, 70, 70);
-	libinput_dispatch(li);
-	litest_timeout_gesture_scroll();
-	libinput_dispatch(li);
-
-	/* This is actually a small swipe gesture, all three fingers moving
-	 * down but we're checking for the code that triggers based on
-	 * finger position. */
-	litest_touch_move(dev, 0, 40, 30.5);
-	litest_touch_move(dev, 1, 50, 70.5);
-	litest_touch_move(dev, 2, 60, 70.5);
-	if (nfingers > 3)
-		litest_touch_move(dev, 3, 70, 70.5);
-	libinput_dispatch(li);
-
-	event = libinput_get_event(li);
-	litest_is_gesture_event(event,
-				LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
-				nfingers);
-	libinput_event_destroy(event);
-
-	litest_touch_move_to(dev, 0, 40, 30.5, 40, 36, 5);
-	litest_touch_move_to(dev, 1, 50, 70.5, 50, 76, 5);
-	litest_touch_move_to(dev, 2, 60, 70.5, 60, 76, 5);
-	if (nfingers > 3)
-		litest_touch_move_to(dev, 3, 70, 70.5, 60, 76, 5);
-	libinput_dispatch(li);
-
-	litest_assert_only_typed_events(li,
-					LIBINPUT_EVENT_GESTURE_PINCH_UPDATE);
-}
-END_TEST
-
 START_TEST(gestures_pinch)
 {
 	struct litest_device *dev = litest_current_device();
@@ -548,7 +501,7 @@ START_TEST(gestures_pinch)
 	int i;
 	double scale, oldscale;
 	double angle;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -563,6 +516,17 @@ START_TEST(gestures_pinch)
 	    !libinput_device_has_capability(dev->libinput_device,
 					    LIBINPUT_DEVICE_CAP_GESTURE))
 		return;
+
+	/* If the device is too small to provide a finger spread wide enough
+	 * to avoid the scroll bias, skip the test */
+	if (cardinal == E || cardinal == W) {
+		double w = 0, h = 0;
+		libinput_device_get_size(dev->libinput_device, &w, &h);
+		/* 0.6 because the code below gives us points like 20/y and
+		 * 80/y. 45 because the threshold in the code is 40mm */
+		if (w * 0.6 < 45)
+			return;
+	}
 
 	dir_x = cardinals[cardinal][0];
 	dir_y = cardinals[cardinal][1];
@@ -649,7 +613,7 @@ START_TEST(gestures_pinch_3fg)
 	int i;
 	double scale, oldscale;
 	double angle;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -754,7 +718,7 @@ START_TEST(gestures_pinch_4fg)
 	int i;
 	double scale, oldscale;
 	double angle;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -779,7 +743,7 @@ START_TEST(gestures_pinch_4fg)
 	litest_touch_down(dev, 3, 52 - dir_x, 52 - dir_y);
 	libinput_dispatch(li);
 
-	for (i = 0; i < 8; i++) {
+	for (i = 0; i < 7; i++) {
 		litest_push_event_frame(dev);
 		if (dir_x > 0.0)
 			dir_x -= 2;
@@ -865,7 +829,7 @@ START_TEST(gestures_spread)
 	int i;
 	double scale, oldscale;
 	double angle;
-	int cardinals[8][2] = {
+	int cardinals[NCARDINALS][2] = {
 		{ 0, 30 },
 		{ 30, 30 },
 		{ 30, 0 },
@@ -880,6 +844,17 @@ START_TEST(gestures_spread)
 	    !libinput_device_has_capability(dev->libinput_device,
 					    LIBINPUT_DEVICE_CAP_GESTURE))
 		return;
+
+	/* If the device is too small to provide a finger spread wide enough
+	 * to avoid the scroll bias, skip the test */
+	if (cardinal == E || cardinal == W) {
+		double w = 0, h = 0;
+		libinput_device_get_size(dev->libinput_device, &w, &h);
+		/* 0.6 because the code below gives us points like 20/y and
+		 * 80/y. 45 because the threshold in the code is 40mm */
+		if (w * 0.6 < 45)
+			return;
+	}
 
 	dir_x = cardinals[cardinal][0];
 	dir_y = cardinals[cardinal][1];
@@ -1039,9 +1014,7 @@ END_TEST
 
 TEST_COLLECTION(gestures)
 {
-	/* N, NE, ... */
-	struct range cardinals = { 0, 8 };
-	struct range fingers = { 3, 5 };
+	struct range cardinals = { N, N + NCARDINALS };
 
 	litest_add("gestures:cap", gestures_cap, LITEST_TOUCHPAD, LITEST_SINGLE_TOUCH);
 	litest_add("gestures:cap", gestures_nocap, LITEST_ANY, LITEST_TOUCHPAD);
@@ -1054,7 +1027,6 @@ TEST_COLLECTION(gestures)
 	litest_add_ranged("gestures:pinch", gestures_pinch_3fg, LITEST_TOUCHPAD, LITEST_SINGLE_TOUCH, &cardinals);
 	litest_add_ranged("gestures:pinch", gestures_pinch_4fg, LITEST_TOUCHPAD, LITEST_SINGLE_TOUCH, &cardinals);
 	litest_add_ranged("gestures:pinch", gestures_spread, LITEST_TOUCHPAD, LITEST_SINGLE_TOUCH, &cardinals);
-	litest_add_ranged("gestures:pinch", gestures_pinch_vertical_position, LITEST_TOUCHPAD, LITEST_SINGLE_TOUCH, &fingers);
 
 	litest_add("gestures:swipe", gestures_3fg_buttonarea_scroll, LITEST_CLICKPAD, LITEST_SINGLE_TOUCH);
 	litest_add("gestures:swipe", gestures_3fg_buttonarea_scroll_btntool, LITEST_CLICKPAD, LITEST_SINGLE_TOUCH);

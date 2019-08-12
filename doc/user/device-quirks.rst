@@ -132,12 +132,6 @@ general-purpose **Model*** flags are listed here.
 
 ModelALPSTouchpad, ModelAppleTouchpad, ModelWacomTouchpad, ModelChromebook
     Reserved for touchpads made by the respective vendors
-ModelTabletNoTilt
-    Indicates that the tablet stylus does not provide tilt axis
-    information, even if the kernel exposes that axis.
-ModelTabletNoProximityOut
-    Indicates that the tablet stylus does not send correct proximity out
-    events.
 ModelTouchpadVisibleMarker
     Indicates the touchpad has a drawn-on visible marker between the software
     buttons.
@@ -183,3 +177,6 @@ AttrEventCodeDisable=EV_ABS;BTN_STYLUS;EV_KEY:0x123;
     Disables the evdev event type/code tuples on the device. Entries may be
     a named event type, or a named event code, or a named event type with a
     hexadecimal event code, separated by a single colon.
+AttrPointingStickIntegration=internal|external
+    Indicates the integration of the pointing stick. This is a string enum.
+    Only needed for external pointing sticks. These are rare.

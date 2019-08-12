@@ -71,28 +71,25 @@ static struct input_id input_id = {
 };
 
 static int events[] = {
+	EV_KEY, BTN_TOOL_FINGER,
 	EV_KEY, BTN_TOUCH,
-	INPUT_PROP_MAX, INPUT_PROP_DIRECT,
+	EV_KEY, BTN_TOOL_DOUBLETAP,
+	INPUT_PROP_MAX, INPUT_PROP_POINTER,
 	-1, -1,
 };
 
-static const char udev_rule[] =
-"ACTION==\"remove\", GOTO=\"rule_end\"\n"
-"KERNEL!=\"event*\", GOTO=\"rule_end\"\n"
-"\n"
-"ATTRS{name}==\"litest Wacom Bamboo 2FG 4x5 Finger*\",\\\n"
-"    ENV{LIBINPUT_DEVICE_GROUP}=\"wacom-bamboo-2fg-group\"\n"
-"\n"
-"LABEL=\"rule_end\"";
-
 TEST_DEVICE("wacom-bamboo-2fg-finger",
 	.type = LITEST_WACOM_BAMBOO_2FG_FINGER,
-	.features = LITEST_TOUCH,
+	.features = LITEST_TOUCHPAD,
 	.interface = &interface,
 
-	.name = "Wacom Bamboo 2F 4x5 Finger",
+	.name = "Wacom Bamboo 2FG 4x5 Finger",
 	.id = &input_id,
 	.events = events,
 	.absinfo = absinfo,
-	.udev_rule = udev_rule,
+	.udev_properties = {
+		{ "LIBINPUT_DEVICE_GROUP", "wacom-bamboo-2fg-group" },
+		{ "ID_INPUT_TABLET", "1" },
+		{ "ID_INPUT_TOUCHPAD", "1" },
+	}
 )

@@ -26,9 +26,27 @@
 import argparse
 import os
 import unittest
+import resource
 import sys
 import subprocess
 import time
+
+
+def _disable_coredump():
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def run_command(args):
+    with subprocess.Popen(args, preexec_fn=_disable_coredump,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
+        try:
+            p.wait(0.7)
+        except subprocess.TimeoutExpired:
+            p.send_signal(3)  # SIGQUIT
+        stdout, stderr = p.communicate(timeout=5)
+        if p.returncode == -3:
+            p.returncode = 0
+        return p.returncode, stdout.decode('UTF-8'), stderr.decode('UTF-8')
 
 
 class TestLibinputTool(unittest.TestCase):
@@ -40,13 +58,7 @@ class TestLibinputTool(unittest.TestCase):
         if self.subtool is not None:
             args.insert(1, self.subtool)
 
-        with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
-            time.sleep(0.1)
-            p.send_signal(3) # SIGQUIT
-            p.wait()
-            if p.returncode == -3:
-                p.returncode = 0
-            return p.returncode, p.stdout.read().decode('UTF-8'), p.stderr.read().decode('UTF-8')
+        return run_command(args)
 
     def run_command_success(self, args):
         rc, stdout, stderr = self.run_command(args)
@@ -54,7 +66,7 @@ class TestLibinputTool(unittest.TestCase):
         # never get rc 2 (invalid usage)
         self.assertIn(rc, [0, 1])
 
-    def run_command_unrecognised_option(self, args):
+    def run_command_unrecognized_option(self, args):
         rc, stdout, stderr = self.run_command(args)
         self.assertEqual(rc, 2)
         self.assertTrue(stdout.startswith('Usage') or stdout == '')
@@ -66,7 +78,7 @@ class TestLibinputTool(unittest.TestCase):
         self.assertTrue(stdout.startswith('Usage') or stdout == '')
         self.assertIn('requires an argument', stderr)
 
-    def run_command_unrecognised_tool(self, args):
+    def run_command_unrecognized_tool(self, args):
         rc, stdout, stderr = self.run_command(args)
         self.assertEqual(rc, 2)
         self.assertTrue(stdout.startswith('Usage') or stdout == '')
@@ -89,16 +101,16 @@ class TestLibinputCommand(TestLibinputTool):
         self.assertEqual(stderr, '')
 
     def test_invalid_arguments(self):
-        self.run_command_unrecognised_option(['--banana'])
-        self.run_command_unrecognised_option(['--foo'])
-        self.run_command_unrecognised_option(['--quiet'])
-        self.run_command_unrecognised_option(['--verbose'])
-        self.run_command_unrecognised_option(['--quiet', 'foo'])
+        self.run_command_unrecognized_option(['--banana'])
+        self.run_command_unrecognized_option(['--foo'])
+        self.run_command_unrecognized_option(['--quiet'])
+        self.run_command_unrecognized_option(['--verbose'])
+        self.run_command_unrecognized_option(['--quiet', 'foo'])
 
     def test_invalid_tools(self):
-        self.run_command_unrecognised_tool(['foo'])
-        self.run_command_unrecognised_tool(['debug'])
-        self.run_command_unrecognised_tool(['foo', '--quiet'])
+        self.run_command_unrecognized_tool(['foo'])
+        self.run_command_unrecognized_tool(['debug'])
+        self.run_command_unrecognized_tool(['foo', '--quiet'])
 
 
 class TestToolWithOptions(object):
@@ -168,6 +180,12 @@ class TestToolWithOptions(object):
             self.run_command_success(['--{}'.format(option), str(maximum)])
             self.run_command_success(['--{}={}'.format(option, maximum)])
 
+    def test_apply_to(self):
+        self.run_command_missing_arg(['--apply-to'])
+        self.run_command_success(['--apply-to', '*foo*'])
+        self.run_command_success(['--apply-to', 'foobar'])
+        self.run_command_success(['--apply-to', 'any'])
+
 
 class TestDebugEvents(TestToolWithOptions, TestLibinputTool):
     subtool = 'debug-events'
@@ -183,9 +201,9 @@ class TestDebugEvents(TestToolWithOptions, TestLibinputTool):
         self.assertEqual(rc, 0)
 
     def test_invalid_arguments(self):
-        self.run_command_unrecognised_option(['--banana'])
-        self.run_command_unrecognised_option(['--foo'])
-        self.run_command_unrecognised_option(['--version'])
+        self.run_command_unrecognized_option(['--banana'])
+        self.run_command_unrecognized_option(['--foo'])
+        self.run_command_unrecognized_option(['--version'])
 
 
 class TestDebugGUI(TestToolWithOptions, TestLibinputTool):
@@ -193,7 +211,18 @@ class TestDebugGUI(TestToolWithOptions, TestLibinputTool):
 
     @classmethod
     def setUpClass(cls):
+        # This is set by meson
+        debug_gui_enabled = @MESON_ENABLED_DEBUG_GUI@
+        if not debug_gui_enabled:
+            raise unittest.SkipTest()
+
         if not os.getenv('DISPLAY') and not os.getenv('WAYLAND_DISPLAY'):
+            raise unittest.SkipTest()
+
+        # 77 means gtk_init() failed, which is probably because you can't
+        # connect to the display server.
+        rc, _, _ = run_command([TestLibinputTool.libinput_tool, cls.subtool, '--help'])
+        if rc == 77:
             raise unittest.SkipTest()
 
     def test_verbose_quiet(self):
@@ -201,16 +230,13 @@ class TestDebugGUI(TestToolWithOptions, TestLibinputTool):
         self.assertEqual(rc, 0)
 
     def test_invalid_arguments(self):
-        self.run_command_unrecognised_option(['--quiet'])
-        self.run_command_unrecognised_option(['--banana'])
-        self.run_command_unrecognised_option(['--foo'])
-        self.run_command_unrecognised_option(['--version'])
+        self.run_command_unrecognized_option(['--quiet'])
+        self.run_command_unrecognized_option(['--banana'])
+        self.run_command_unrecognized_option(['--foo'])
+        self.run_command_unrecognized_option(['--version'])
 
 
 if __name__ == '__main__':
-    if os.environ.get('USING_VALGRIND'):
-        sys.exit(77)
-
     parser = argparse.ArgumentParser(description='Verify a libinput tool\'s option parsing')
     parser.add_argument('--tool-path', metavar='/path/to/builddir/libinput',
                         type=str,

@@ -26,6 +26,8 @@
 #include <check.h>
 #include <libinput-util.h>
 
+#include <valgrind/valgrind.h>
+
 #include "libinput-util.h"
 #define  TEST_VERSIONSORT
 #include "libinput-versionsort.h"
@@ -1069,8 +1071,8 @@ int main(int argc, char **argv)
         /* when running under valgrind we're using nofork mode, so a signal
          * raised by a test will fail in valgrind. There's nothing to
          * memcheck here anyway, so just skip the valgrind test */
-        if (getenv("USING_VALGRIND"))
-            return EXIT_SUCCESS;
+        if (RUNNING_ON_VALGRIND)
+            return 77;
 
 	s = litest_utils_suite();
         sr = srunner_create(s);

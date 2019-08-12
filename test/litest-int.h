@@ -35,7 +35,7 @@ struct litest_test_device {
 	struct list node; /* global test device list */
 
 	enum litest_device_type type;
-	enum litest_device_feature features;
+	int64_t features;
 	const char *shortname;
 	void (*setup)(void); /* test fixture, used by check */
 	void (*teardown)(void); /* test fixture, used by check */
@@ -76,6 +76,8 @@ struct litest_test_device {
 
 	const char *udev_rule;
 	const char *quirk_file;
+
+	const struct key_value_str udev_properties[];
 };
 
 struct litest_device_interface {

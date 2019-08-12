@@ -1,7 +1,11 @@
 #include <config.h>
 
+#include <sys/resource.h>
+#include <sys/time.h>
 #include <check.h>
 #include <signal.h>
+
+#include <valgrind/valgrind.h>
 
 #include "litest.h"
 
@@ -439,6 +443,7 @@ litest_assert_macros_suite(void)
 int
 main (int argc, char **argv)
 {
+	const struct rlimit corelimit = { 0, 0 };
 	int nfailed;
 	Suite *s;
 	SRunner *sr;
@@ -446,8 +451,11 @@ main (int argc, char **argv)
         /* when running under valgrind we're using nofork mode, so a signal
          * raised by a test will fail in valgrind. There's nothing to
          * memcheck here anyway, so just skip the valgrind test */
-        if (getenv("USING_VALGRIND"))
-            return EXIT_SUCCESS;
+        if (RUNNING_ON_VALGRIND)
+            return 77;
+
+	if (setrlimit(RLIMIT_CORE, &corelimit) != 0)
+		perror("WARNING: Core dumps not disabled");
 
 	s = litest_assert_macros_suite();
         sr = srunner_create(s);

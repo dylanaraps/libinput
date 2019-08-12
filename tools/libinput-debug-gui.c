@@ -134,12 +134,25 @@ struct window {
 		double pressure;
 		double distance;
 		double tilt_x, tilt_y;
+		double rotation;
+		double size_major, size_minor;
 
 		/* these are for the delta coordinates, but they're not
 		 * deltas, they are converted into abs positions */
 		size_t ndeltas;
 		struct point deltas[64];
 	} tool;
+
+	struct {
+		struct {
+			double position;
+			int number;
+		} ring;
+		struct {
+			double position;
+			int number;
+		} strip;
+	} pad;
 
 	struct {
 		int rel_x, rel_y; /* REL_X/Y */
@@ -385,11 +398,23 @@ draw_abs_pointer(struct window *w, cairo_t *cr)
 }
 
 static inline void
+draw_text(cairo_t *cr, const char *text, double x, double y)
+{
+	cairo_text_extents_t te;
+	cairo_font_extents_t fe;
+
+	cairo_text_extents(cr, text, &te);
+	cairo_font_extents(cr, &fe);
+	/* center of the rectangle */
+	cairo_move_to(cr, x, y);
+	cairo_rel_move_to(cr, -te.width/2, -fe.descent + te.height/2);
+	cairo_show_text(cr, text);
+}
+
+static inline void
 draw_other_button (struct window *w, cairo_t *cr)
 {
 	const char *name = w->buttons.other_name;
-	cairo_text_extents_t te;
-	cairo_font_extents_t fe;
 
 	cairo_save(cr);
 
@@ -404,12 +429,8 @@ draw_other_button (struct window *w, cairo_t *cr)
 	cairo_fill(cr);
 
 	cairo_set_source_rgb(cr, 0, 0, 0);
-	cairo_text_extents(cr, name, &te);
-	cairo_font_extents(cr, &fe);
-	/* center of the rectangle */
-	cairo_move_to(cr, w->width/2, w->height - 150 + 15);
-	cairo_rel_move_to(cr, -te.width/2, -fe.descent + te.height/2);
-	cairo_show_text(cr, name);
+
+	draw_text(cr, name, w->width/2, w->height - 150 + 15);
 
 outline:
 	cairo_set_source_rgb(cr, 0, 0, 0);
@@ -445,6 +466,67 @@ draw_buttons(struct window *w, cairo_t *cr)
 }
 
 static inline void
+draw_pad(struct window *w, cairo_t *cr)
+{
+	double rx, ry;
+	double pos;
+	char number[3];
+
+	rx = w->width/2 - 200;
+	ry = w->height/2 + 100;
+
+	cairo_save(cr);
+	/* outer ring */
+	cairo_set_source_rgb(cr, .7, .7, .0);
+	cairo_arc(cr, rx, ry, 50, 0, 2 * M_PI);
+	cairo_fill(cr);
+
+	/* inner ring */
+	cairo_set_source_rgb(cr, 1., 1., 1.);
+	cairo_arc(cr, rx, ry, 30, 0, 2 * M_PI);
+	cairo_fill(cr);
+
+	/* marker */
+	/* libinput has degrees and 0 is north, cairo has radians and 0 is
+	 * east */
+	if (w->pad.ring.position != -1) {
+		pos = (w->pad.ring.position + 270) * M_PI/180.0;
+		cairo_set_source_rgb(cr, .0, .0, .0);
+		cairo_set_line_width(cr, 20);
+		cairo_arc(cr, rx, ry, 40, pos - M_PI/8 , pos + M_PI/8);
+		cairo_stroke(cr);
+
+		snprintf(number, sizeof(number), "%d", w->pad.ring.number);
+		cairo_set_source_rgb(cr, .0, .0, .0);
+		draw_text(cr, number, rx, ry);
+
+	}
+
+	cairo_restore(cr);
+
+	rx = w->width/2 - 300;
+	ry = w->height/2 + 50;
+
+	cairo_save(cr);
+	cairo_set_source_rgb(cr, .7, .7, .0);
+	cairo_rectangle(cr, rx, ry, 20, 100);
+	cairo_fill(cr);
+
+	if (w->pad.strip.position != -1) {
+		pos = w->pad.strip.position * 80;
+		cairo_set_source_rgb(cr, .0, .0, .0);
+		cairo_rectangle(cr, rx, ry + pos, 20, 20);
+		cairo_fill(cr);
+
+		snprintf(number, sizeof(number), "%d", w->pad.strip.number);
+		cairo_set_source_rgb(cr, .0, .0, .0);
+		draw_text(cr, number, rx + 10, ry - 10);
+	}
+
+	cairo_restore(cr);
+}
+
+static inline void
 draw_tablet(struct window *w, cairo_t *cr)
 {
 	double x, y;
@@ -473,12 +555,35 @@ draw_tablet(struct window *w, cairo_t *cr)
 		cairo_set_source_rgb(cr, .2, .8, .8);
 
 	cairo_translate(cr, w->tool.x, w->tool.y);
+	/* scale of 2.5 is large enough to make the marker visible around the
+	   physical totem */
+	cairo_scale(cr,
+		    1.0 + w->tool.size_major * 2.5,
+		    1.0 + w->tool.size_minor * 2.5);
 	cairo_scale(cr, 1.0 + w->tool.tilt_x/30.0, 1.0 + w->tool.tilt_y/30.0);
+	if (w->tool.rotation)
+		cairo_rotate(cr, w->tool.rotation * M_PI/180.0);
+	if (w->tool.pressure)
+		cairo_set_source_rgb(cr, .8, .8, .2);
 	cairo_arc(cr, 0, 0,
 		  1 + 10 * max(w->tool.pressure, w->tool.distance),
 		  0, 2 * M_PI);
 	cairo_fill(cr);
 	cairo_restore(cr);
+
+	/* The line to indicate the origin */
+	if (w->tool.size_major) {
+		cairo_save(cr);
+		cairo_scale(cr, 1.0, 1.0);
+		cairo_translate(cr, w->tool.x, w->tool.y);
+		if (w->tool.rotation)
+			cairo_rotate(cr, w->tool.rotation * M_PI/180.0);
+		cairo_set_source_rgb(cr, .0, .0, .0);
+		cairo_move_to(cr, 0, 0);
+		cairo_rel_line_to(cr, 0, -w->tool.size_major * 2.5);
+		cairo_stroke(cr);
+		cairo_restore(cr);
+	}
 
 	/* tablet deltas */
 	mask = ARRAY_LENGTH(w->tool.deltas);
@@ -608,6 +713,7 @@ draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 	draw_evdev_rel(w, cr);
 	draw_evdev_abs(w, cr);
 
+	draw_pad(w, cr);
 	draw_tablet(w, cr);
 	draw_gestures(w, cr);
 	draw_scrollbars(w, cr);
@@ -688,6 +794,9 @@ window_init(struct window *w)
 	gtk_widget_set_events(w->area, 0);
 	gtk_container_add(GTK_CONTAINER(w->win), w->area);
 	gtk_widget_show_all(w->win);
+
+	w->pad.ring.position = -1;
+	w->pad.strip.position = -1;
 }
 
 static void
@@ -1164,6 +1273,8 @@ handle_event_tablet(struct libinput_event *ev, struct window *w)
 	struct point point;
 	int idx;
 	const int mask = ARRAY_LENGTH(w->tool.deltas);
+	bool is_press;
+	unsigned int button;
 
 	x = libinput_event_tablet_tool_get_x_transformed(t, w->width);
 	y = libinput_event_tablet_tool_get_y_transformed(t, w->height);
@@ -1207,6 +1318,9 @@ handle_event_tablet(struct libinput_event *ev, struct window *w)
 		w->tool.distance = libinput_event_tablet_tool_get_distance(t);
 		w->tool.tilt_x = libinput_event_tablet_tool_get_tilt_x(t);
 		w->tool.tilt_y = libinput_event_tablet_tool_get_tilt_y(t);
+		w->tool.rotation = libinput_event_tablet_tool_get_rotation(t);
+		w->tool.size_major = libinput_event_tablet_tool_get_size_major(t);
+		w->tool.size_minor = libinput_event_tablet_tool_get_size_minor(t);
 
 		/* Add the delta to the last position and store them as abs
 		 * coordinates */
@@ -1220,6 +1334,49 @@ handle_event_tablet(struct libinput_event *ev, struct window *w)
 		w->tool.ndeltas++;
 		break;
 	case LIBINPUT_EVENT_TABLET_TOOL_BUTTON:
+		is_press = libinput_event_tablet_tool_get_button_state(t) == LIBINPUT_BUTTON_STATE_PRESSED;
+		button = libinput_event_tablet_tool_get_button(t);
+
+		w->buttons.other = is_press;
+		w->buttons.other_name = libevdev_event_code_get_name(EV_KEY,
+								     button);
+		break;
+	default:
+		abort();
+	}
+}
+
+static void
+handle_event_tablet_pad(struct libinput_event *ev, struct window *w)
+{
+	struct libinput_event_tablet_pad *p = libinput_event_get_tablet_pad_event(ev);
+	bool is_press;
+	unsigned int button;
+	static const char *pad_buttons[] = {
+		"Pad 0", "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Pad 5",
+		"Pad 6", "Pad 7", "Pad 8", "Pad 9", "Pad >= 10"
+	};
+	double position;
+	double number;
+
+	switch (libinput_event_get_type(ev)) {
+	case LIBINPUT_EVENT_TABLET_PAD_BUTTON:
+		is_press = libinput_event_tablet_pad_get_button_state(p) == LIBINPUT_BUTTON_STATE_PRESSED;
+		button = libinput_event_tablet_pad_get_button_number(p);
+		w->buttons.other = is_press;
+		w->buttons.other_name = pad_buttons[min(button, 10)];
+		break;
+	case LIBINPUT_EVENT_TABLET_PAD_RING:
+		position = libinput_event_tablet_pad_get_ring_position(p);
+		number = libinput_event_tablet_pad_get_ring_number(p);
+		w->pad.ring.number = number;
+		w->pad.ring.position = position;
+		break;
+	case LIBINPUT_EVENT_TABLET_PAD_STRIP:
+		position = libinput_event_tablet_pad_get_strip_position(p);
+		number = libinput_event_tablet_pad_get_strip_number(p);
+		w->pad.strip.number = number;
+		w->pad.strip.position = position;
 		break;
 	default:
 		abort();
@@ -1289,6 +1446,7 @@ handle_event_libinput(GIOChannel *source, GIOCondition condition, gpointer data)
 		case LIBINPUT_EVENT_TABLET_PAD_BUTTON:
 		case LIBINPUT_EVENT_TABLET_PAD_RING:
 		case LIBINPUT_EVENT_TABLET_PAD_STRIP:
+			handle_event_tablet_pad(ev, w);
 			break;
 		case LIBINPUT_EVENT_SWITCH_TOGGLE:
 			break;
@@ -1334,7 +1492,8 @@ main(int argc, char **argv)
 	const char *seat_or_device = "seat0";
 	bool verbose = false;
 
-	gtk_init(&argc, &argv);
+	if (!gtk_init_check(&argc, &argv))
+		return 77;
 
 	g_unix_signal_add(SIGINT, signal_handler, NULL);
 

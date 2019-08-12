@@ -28,6 +28,10 @@
 #include <stdbool.h>
 #include <limits.h>
 
+#if HAVE_LIBWACOM
+#include <libwacom/libwacom.h>
+#endif
+
 #include "quirks.h"
 #include "evdev-mt-touchpad.h"
 
@@ -35,9 +39,13 @@
 #define DEFAULT_TRACKPOINT_EVENT_TIMEOUT ms2us(40)
 #define DEFAULT_KEYBOARD_ACTIVITY_TIMEOUT_1 ms2us(200)
 #define DEFAULT_KEYBOARD_ACTIVITY_TIMEOUT_2 ms2us(500)
-#define THUMB_MOVE_TIMEOUT ms2us(300)
 #define FAKE_FINGER_OVERFLOW (1 << 7)
 #define THUMB_IGNORE_SPEED_THRESHOLD 20 /* mm/s */
+
+enum notify {
+	DONT_NOTIFY,
+	DO_NOTIFY,
+};
 
 static inline struct tp_history_point*
 tp_motion_history_offset(struct tp_touch *t, int offset)
@@ -345,8 +353,6 @@ tp_begin_touch(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
 	t->was_down = true;
 	tp->nfingers_down++;
 	t->palm.time = time;
-	t->thumb.state = THUMB_STATE_MAYBE;
-	t->thumb.first_touch_time = time;
 	t->tap.is_thumb = false;
 	t->tap.is_palm = false;
 	t->speed.exceeded_count = 0;
@@ -466,6 +472,29 @@ tp_get_delta(struct tp_touch *t)
 	return delta;
 }
 
+static inline int32_t
+rotated(struct tp_dispatch *tp, unsigned int code, int value)
+{
+	const struct input_absinfo *absinfo;
+
+	if (!tp->left_handed.rotate)
+		return value;
+
+	switch (code) {
+	case ABS_X:
+	case ABS_MT_POSITION_X:
+		absinfo = tp->device->abs.absinfo_x;
+		break;
+	case ABS_Y:
+	case ABS_MT_POSITION_Y:
+		absinfo = tp->device->abs.absinfo_y;
+		break;
+	default:
+		abort();
+	}
+	return absinfo->maximum - (value - absinfo->minimum);
+}
+
 static void
 tp_process_absolute(struct tp_dispatch *tp,
 		    const struct input_event *e,
@@ -478,7 +507,7 @@ tp_process_absolute(struct tp_dispatch *tp,
 		evdev_device_check_abs_axis_range(tp->device,
 						  e->code,
 						  e->value);
-		t->point.x = e->value;
+		t->point.x = rotated(tp, e->code, e->value);
 		t->time = time;
 		t->dirty = true;
 		tp->queued |= TOUCHPAD_EVENT_MOTION;
@@ -487,7 +516,7 @@ tp_process_absolute(struct tp_dispatch *tp,
 		evdev_device_check_abs_axis_range(tp->device,
 						  e->code,
 						  e->value);
-		t->point.y = e->value;
+		t->point.y = rotated(tp, e->code, e->value);
 		t->time = time;
 		t->dirty = true;
 		tp->queued |= TOUCHPAD_EVENT_MOTION;
@@ -538,7 +567,7 @@ tp_process_absolute_st(struct tp_dispatch *tp,
 		evdev_device_check_abs_axis_range(tp->device,
 						  e->code,
 						  e->value);
-		t->point.x = e->value;
+		t->point.x = rotated(tp, e->code, e->value);
 		t->time = time;
 		t->dirty = true;
 		tp->queued |= TOUCHPAD_EVENT_MOTION;
@@ -547,7 +576,7 @@ tp_process_absolute_st(struct tp_dispatch *tp,
 		evdev_device_check_abs_axis_range(tp->device,
 						  e->code,
 						  e->value);
-		t->point.y = e->value;
+		t->point.y = rotated(tp, e->code, e->value);
 		t->time = time;
 		t->dirty = true;
 		tp->queued |= TOUCHPAD_EVENT_MOTION;
@@ -742,7 +771,18 @@ tp_touch_active(const struct tp_dispatch *tp, const struct tp_touch *t)
 	return (t->state == TOUCH_BEGIN || t->state == TOUCH_UPDATE) &&
 		t->palm.state == PALM_NONE &&
 		!t->pinned.is_pinned &&
-		t->thumb.state != THUMB_STATE_YES &&
+		!tp_thumb_ignored(tp, t) &&
+		tp_button_touch_active(tp, t) &&
+		tp_edge_scroll_touch_active(tp, t);
+}
+
+bool
+tp_touch_active_for_gesture(const struct tp_dispatch *tp, const struct tp_touch *t)
+{
+	return (t->state == TOUCH_BEGIN || t->state == TOUCH_UPDATE) &&
+		t->palm.state == PALM_NONE &&
+		!t->pinned.is_pinned &&
+		!tp_thumb_ignored_for_gesture(tp, t) &&
 		tp_button_touch_active(tp, t) &&
 		tp_edge_scroll_touch_active(tp, t);
 }
@@ -1113,110 +1153,6 @@ out:
 		  palm_state);
 }
 
-static inline const char*
-thumb_state_to_str(enum tp_thumb_state state)
-{
-	switch(state){
-	CASE_RETURN_STRING(THUMB_STATE_NO);
-	CASE_RETURN_STRING(THUMB_STATE_YES);
-	CASE_RETURN_STRING(THUMB_STATE_MAYBE);
-	}
-
-	return NULL;
-}
-
-static void
-tp_thumb_detect(struct tp_dispatch *tp, struct tp_touch *t, uint64_t time)
-{
-	enum tp_thumb_state state = t->thumb.state;
-
-	/* once a thumb, always a thumb, once ruled out always ruled out */
-	if (!tp->thumb.detect_thumbs ||
-	    t->thumb.state != THUMB_STATE_MAYBE)
-		return;
-
-	if (t->point.y < tp->thumb.upper_thumb_line) {
-		/* if a potential thumb is above the line, it won't ever
-		 * label as thumb */
-		t->thumb.state = THUMB_STATE_NO;
-		goto out;
-	}
-
-	/* If the thumb moves by more than 7mm, it's not a resting thumb */
-	if (t->state == TOUCH_BEGIN) {
-		t->thumb.initial = t->point;
-	} else if (t->state == TOUCH_UPDATE) {
-		struct device_float_coords delta;
-		struct phys_coords mm;
-
-		delta = device_delta(t->point, t->thumb.initial);
-		mm = tp_phys_delta(tp, delta);
-		if (length_in_mm(mm) > 7) {
-			t->thumb.state = THUMB_STATE_NO;
-			goto out;
-		}
-	}
-
-	/* If the finger is below the upper thumb line and we have another
-	 * finger in the same area, neither finger is a thumb (unless we've
-	 * already labeled it as such).
-	 */
-	if (t->point.y > tp->thumb.upper_thumb_line &&
-	    tp->nfingers_down > 1) {
-		struct tp_touch *other;
-
-		tp_for_each_touch(tp, other) {
-			if (other->state != TOUCH_BEGIN &&
-			    other->state != TOUCH_UPDATE)
-				continue;
-
-			if (other->point.y > tp->thumb.upper_thumb_line) {
-				t->thumb.state = THUMB_STATE_NO;
-				if (other->thumb.state == THUMB_STATE_MAYBE)
-					other->thumb.state = THUMB_STATE_NO;
-				break;
-			}
-		}
-	}
-
-	/* Note: a thumb at the edge of the touchpad won't trigger the
-	 * threshold, the surface area is usually too small. So we have a
-	 * two-stage detection: pressure and time within the area.
-	 * A finger that remains at the very bottom of the touchpad becomes
-	 * a thumb.
-	 */
-	if (tp->thumb.use_pressure &&
-	    t->pressure > tp->thumb.pressure_threshold) {
-		t->thumb.state = THUMB_STATE_YES;
-	} else if (tp->thumb.use_size &&
-		 (t->major > tp->thumb.size_threshold) &&
-		 (t->minor < (tp->thumb.size_threshold * 0.6))) {
-		t->thumb.state = THUMB_STATE_YES;
-	} else if (t->point.y > tp->thumb.lower_thumb_line &&
-		 tp->scroll.method != LIBINPUT_CONFIG_SCROLL_EDGE &&
-		 t->thumb.first_touch_time + THUMB_MOVE_TIMEOUT < time) {
-		t->thumb.state = THUMB_STATE_YES;
-	}
-
-	/* now what? we marked it as thumb, so:
-	 *
-	 * - pointer motion must ignore this touch
-	 * - clickfinger must ignore this touch for finger count
-	 * - software buttons are unaffected
-	 * - edge scrolling unaffected
-	 * - gestures: unaffected
-	 * - tapping: honour thumb on begin, ignore it otherwise for now,
-	 *   this gets a tad complicated otherwise
-	 */
-out:
-	if (t->thumb.state != state)
-		evdev_log_debug(tp->device,
-			  "thumb state: touch %d, %s → %s\n",
-			  t->index,
-			  thumb_state_to_str(state),
-			  thumb_state_to_str(t->thumb.state));
-}
-
 static void
 tp_unhover_pressure(struct tp_dispatch *tp, uint64_t time)
 {
@@ -1556,52 +1492,6 @@ tp_detect_jumps(const struct tp_dispatch *tp,
 	return is_jump;
 }
 
-static void
-tp_detect_thumb_while_moving(struct tp_dispatch *tp)
-{
-	struct tp_touch *t;
-	struct tp_touch *first = NULL,
-			*second = NULL;
-	struct device_coords distance;
-	struct phys_coords mm;
-
-	tp_for_each_touch(tp, t) {
-		if (t->state == TOUCH_NONE ||
-		    t->state == TOUCH_HOVERING)
-			continue;
-
-		if (t->state != TOUCH_BEGIN)
-			first = t;
-		else
-			second = t;
-
-		if (first && second)
-			break;
-	}
-
-	assert(first);
-	assert(second);
-
-	if (tp->scroll.method == LIBINPUT_CONFIG_SCROLL_2FG) {
-		/* If the second finger comes down next to the other one, we
-		 * assume this is a scroll motion.
-		 */
-		distance.x = abs(first->point.x - second->point.x);
-		distance.y = abs(first->point.y - second->point.y);
-		mm = evdev_device_unit_delta_to_mm(tp->device, &distance);
-
-		if (mm.x <= 25 && mm.y <= 15)
-			return;
-	}
-
-	/* Finger are too far apart or 2fg scrolling is disabled, mark
-	 * second finger as thumb */
-	evdev_log_debug(tp->device,
-			"touch %d is speed-based thumb\n",
-			second->index);
-	second->thumb.state = THUMB_STATE_YES;
-}
-
 /**
  * Rewrite the motion history so that previous points' timestamps are the
  * current point's timestamp minus whatever MSC_TIMESTAMP gives us.
@@ -1787,7 +1677,7 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 			tp_motion_history_reset(t);
 		}
 
-		tp_thumb_detect(tp, t, time);
+		tp_thumb_update_touch(tp, t, time);
 		tp_palm_detect(tp, t, time);
 		tp_detect_wobbling(tp, t, time);
 		tp_motion_hysteresis(tp, t);
@@ -1806,7 +1696,7 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 		 * never count down. Let's see how far we get with that.
 		 */
 		if (t->speed.last_speed > THUMB_IGNORE_SPEED_THRESHOLD) {
-			if (t->speed.exceeded_count < 10)
+			if (t->speed.exceeded_count < 15)
 				t->speed.exceeded_count++;
 		} else if (t->speed.exceeded_count > 0) {
 				t->speed.exceeded_count--;
@@ -1825,12 +1715,10 @@ tp_process_state(struct tp_dispatch *tp, uint64_t time)
 		}
 	}
 
-	/* If we have one touch that exceeds the speed and we get a new
-	 * touch down while doing that, the second touch is a thumb */
-	if (have_new_touch &&
-	    tp->nfingers_down == 2 &&
-	    speed_exceeded_count > 5)
-		tp_detect_thumb_while_moving(tp);
+	if (tp->thumb.detect_thumbs &&
+	    have_new_touch &&
+	    tp->nfingers_down >= 2)
+		tp_thumb_update_multifinger(tp);
 
 	if (restart_filter)
 		filter_restart(tp->device->pointer.filter, tp, time);
@@ -1878,6 +1766,9 @@ tp_post_process_state(struct tp_dispatch *tp, uint64_t time)
 
 	tp->queued = TOUCHPAD_EVENT_NONE;
 
+	if (tp->nfingers_down == 0)
+		tp_thumb_reset(tp);
+
 	tp_tap_post_process_state(tp);
 }
 
@@ -1910,6 +1801,24 @@ tp_post_events(struct tp_dispatch *tp, uint64_t time)
 }
 
 static void
+tp_apply_rotation(struct evdev_device *device)
+{
+	struct tp_dispatch *tp = (struct tp_dispatch *)device->dispatch;
+
+	if (tp->left_handed.want_rotate == tp->left_handed.rotate)
+		return;
+
+	if (tp->nfingers_down)
+		return;
+
+	tp->left_handed.rotate = tp->left_handed.want_rotate;
+
+	evdev_log_debug(device,
+			"touchpad-rotation: rotation is %s\n",
+			tp->left_handed.rotate ? "on" : "off");
+}
+
+static void
 tp_handle_state(struct tp_dispatch *tp,
 		uint64_t time)
 {
@@ -1919,6 +1828,7 @@ tp_handle_state(struct tp_dispatch *tp,
 	tp_post_process_state(tp, time);
 
 	tp_clickpad_middlebutton_apply_config(tp->device);
+	tp_apply_rotation(tp->device);
 }
 
 static inline void
@@ -2050,6 +1960,8 @@ tp_clear_state(struct tp_dispatch *tp)
 	 *
 	 * Then lift all touches so the touchpad is in a neutral state.
 	 *
+	 * Then reset thumb state.
+	 *
 	 */
 	tp_release_all_buttons(tp, now);
 	tp_release_all_taps(tp, now);
@@ -2058,6 +1970,8 @@ tp_clear_state(struct tp_dispatch *tp)
 		tp_end_sequence(tp, t, now);
 	}
 	tp_release_fake_touches(tp);
+
+	tp_thumb_reset(tp);
 
 	tp_handle_state(tp, now);
 }
@@ -2480,7 +2394,7 @@ tp_pair_lid_switch(struct evdev_device *touchpad,
 
 	if (tp->lid_switch.lid_switch == NULL) {
 		evdev_log_debug(touchpad,
-				"lid_switch: activated for %s<->%s\n",
+				"lid: activated for %s<->%s\n",
 				touchpad->devname,
 				lid_switch->devname);
 
@@ -2511,7 +2425,7 @@ tp_pair_tablet_mode_switch(struct evdev_device *touchpad,
 		return;
 
 	evdev_log_debug(touchpad,
-			"tablet_mode_switch: activated for %s<->%s\n",
+			"tablet-mode: activated for %s<->%s\n",
 			touchpad->devname,
 			tablet_mode_switch->devname);
 
@@ -2528,6 +2442,63 @@ tp_pair_tablet_mode_switch(struct evdev_device *touchpad,
 }
 
 static void
+tp_change_rotation(struct evdev_device *device, enum notify notify)
+{
+	struct tp_dispatch *tp = (struct tp_dispatch *)device->dispatch;
+	struct evdev_device *tablet_device = tp->left_handed.tablet_device;
+	bool tablet_is_left, touchpad_is_left;
+
+	if (!tp->left_handed.must_rotate)
+		return;
+
+	touchpad_is_left = device->left_handed.enabled;
+	tablet_is_left = tp->left_handed.tablet_left_handed_state;
+
+	tp->left_handed.want_rotate = touchpad_is_left || tablet_is_left;
+
+	tp_apply_rotation(device);
+
+	if (notify == DO_NOTIFY && tablet_device) {
+		struct evdev_dispatch *dispatch = tablet_device->dispatch;
+
+		if (dispatch->interface->left_handed_toggle)
+			dispatch->interface->left_handed_toggle(dispatch,
+								tablet_device,
+								tp->left_handed.want_rotate);
+	}
+}
+
+static void
+tp_pair_tablet(struct evdev_device *touchpad,
+	       struct evdev_device *tablet)
+{
+	struct tp_dispatch *tp = (struct tp_dispatch*)touchpad->dispatch;
+
+	if (!tp->left_handed.must_rotate)
+		return;
+
+	if ((tablet->seat_caps & EVDEV_DEVICE_TABLET) == 0)
+		return;
+
+	if (libinput_device_get_device_group(&touchpad->base) !=
+	    libinput_device_get_device_group(&tablet->base))
+		return;
+
+	tp->left_handed.tablet_device = tablet;
+
+	evdev_log_debug(touchpad,
+			"touchpad-rotation: %s will rotate %s\n",
+			touchpad->devname,
+			tablet->devname);
+
+	if (libinput_device_config_left_handed_get(&tablet->base)) {
+		tp->left_handed.want_rotate = true;
+		tp->left_handed.tablet_left_handed_state = true;
+		tp_change_rotation(touchpad, DONT_NOTIFY);
+	}
+}
+
+static void
 tp_interface_device_added(struct evdev_device *device,
 			  struct evdev_device *added_device)
 {
@@ -2537,6 +2508,7 @@ tp_interface_device_added(struct evdev_device *device,
 	tp_dwt_pair_keyboard(device, added_device);
 	tp_pair_lid_switch(device, added_device);
 	tp_pair_tablet_mode_switch(device, added_device);
+	tp_pair_tablet(device, added_device);
 
 	if (tp->sendevents.current_mode !=
 	    LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE)
@@ -2601,6 +2573,17 @@ tp_interface_device_removed(struct evdev_device *device,
 		}
 		if (!found)
 			tp_resume(tp, device, SUSPEND_EXTERNAL_MOUSE);
+	}
+
+	if (removed_device == tp->left_handed.tablet_device) {
+		tp->left_handed.tablet_device = NULL;
+		tp->left_handed.tablet_left_handed_state = false;
+
+		/* Slight awkwardness: removing the tablet causes the
+		 * touchpad to rotate back to normal if only the tablet was
+		 * set to left-handed. Niche case, nothing to worry about
+		 */
+		tp_change_rotation(device, DO_NOTIFY);
 	}
 }
 
@@ -2728,6 +2711,30 @@ tp_interface_toggle_touch(struct evdev_dispatch *dispatch,
 	}
 }
 
+/* Called when the tablet toggles to left-handed */
+static void
+touchpad_left_handed_toggled(struct evdev_dispatch *dispatch,
+			     struct evdev_device *device,
+			     bool left_handed_enabled)
+{
+	struct tp_dispatch *tp = tp_dispatch(dispatch);
+
+	if (!tp->left_handed.tablet_device)
+		return;
+
+	evdev_log_debug(device,
+			"touchpad-rotation: tablet is %s\n",
+			left_handed_enabled ? "left-handed" : "right-handed");
+
+	/* Our left-handed config is independent even though rotation is
+	 * locked. So we rotate when either device is left-handed. But it
+	 * can only be actually changed when the device is in a neutral
+	 * state, hence the want_rotate.
+	 */
+	tp->left_handed.tablet_left_handed_state = left_handed_enabled;
+	tp_change_rotation(device, DONT_NOTIFY);
+}
+
 static struct evdev_dispatch_interface tp_interface = {
 	.process = tp_interface_process,
 	.suspend = tp_interface_suspend,
@@ -2741,6 +2748,7 @@ static struct evdev_dispatch_interface tp_interface = {
 	.touch_arbitration_toggle = tp_interface_toggle_touch,
 	.touch_arbitration_update_rect = NULL,
 	.get_switch_state = NULL,
+	.left_handed_toggle = touchpad_left_handed_toggled,
 };
 
 static void
@@ -3300,70 +3308,6 @@ tp_init_sendevents(struct tp_dispatch *tp,
 			    tp_keyboard_timeout, tp);
 }
 
-static void
-tp_init_thumb(struct tp_dispatch *tp)
-{
-	struct evdev_device *device = tp->device;
-	double w = 0.0, h = 0.0;
-	struct device_coords edges;
-	struct phys_coords mm = { 0.0, 0.0 };
-	uint32_t threshold;
-	struct quirks_context *quirks;
-	struct quirks *q;
-
-	if (!tp->buttons.is_clickpad)
-		return;
-
-	/* if the touchpad is less than 50mm high, skip thumb detection.
-	 * it's too small to meaningfully interact with a thumb on the
-	 * touchpad */
-	evdev_device_get_size(device, &w, &h);
-	if (h < 50)
-		return;
-
-	tp->thumb.detect_thumbs = true;
-	tp->thumb.use_pressure = false;
-	tp->thumb.pressure_threshold = INT_MAX;
-
-	/* detect thumbs by pressure in the bottom 15mm, detect thumbs by
-	 * lingering in the bottom 8mm */
-	mm.y = h * 0.85;
-	edges = evdev_device_mm_to_units(device, &mm);
-	tp->thumb.upper_thumb_line = edges.y;
-
-	mm.y = h * 0.92;
-	edges = evdev_device_mm_to_units(device, &mm);
-	tp->thumb.lower_thumb_line = edges.y;
-
-	quirks = evdev_libinput_context(device)->quirks;
-	q = quirks_fetch_for_device(quirks, device->udev_device);
-
-	if (libevdev_has_event_code(device->evdev, EV_ABS, ABS_MT_PRESSURE)) {
-		if (quirks_get_uint32(q,
-				      QUIRK_ATTR_THUMB_PRESSURE_THRESHOLD,
-				      &threshold)) {
-			tp->thumb.use_pressure = true;
-			tp->thumb.pressure_threshold = threshold;
-		}
-	}
-
-	if (libevdev_has_event_code(device->evdev, EV_ABS, ABS_MT_TOUCH_MAJOR)) {
-		if (quirks_get_uint32(q,
-				      QUIRK_ATTR_THUMB_SIZE_THRESHOLD,
-				      &threshold)) {
-			tp->thumb.use_size = true;
-			tp->thumb.size_threshold = threshold;
-		}
-	}
-
-	quirks_unref(q);
-
-	evdev_log_debug(device,
-			"thumb: enabled thumb detection%s%s\n",
-			tp->thumb.use_pressure ? " (+pressure)" : "",
-			tp->thumb.use_size ? " (+size)" : "");
-}
-
 static bool
 tp_pass_sanity_check(struct tp_dispatch *tp,
 		     struct evdev_device *device)
@@ -3704,13 +3648,87 @@ tp_change_to_left_handed(struct evdev_device *device)
 	 * so checking physical buttons is enough */
 
 	device->left_handed.enabled = device->left_handed.want_enabled;
+	tp_change_rotation(device, DO_NOTIFY);
+}
+
+static bool
+tp_requires_rotation(struct tp_dispatch *tp, struct evdev_device *device)
+{
+	bool rotate = false;
+#if HAVE_LIBWACOM
+	struct libinput *li = tp_libinput_context(tp);
+	WacomDeviceDatabase *db = NULL;
+	WacomDevice **devices = NULL,
+		    **d;
+	WacomDevice *dev;
+	uint32_t vid = evdev_device_get_id_vendor(device),
+		 pid = evdev_device_get_id_product(device);
+
+	if ((device->tags & EVDEV_TAG_TABLET_TOUCHPAD) == 0)
+		goto out;
+
+	db = libinput_libwacom_ref(li);
+	if (!db)
+		goto out;
+
+	/* Check if we have a device with the same vid/pid. If not,
+	   we need to loop through all devices and check their paired
+	   device. */
+	dev = libwacom_new_from_usbid(db, vid, pid, NULL);
+	if (dev) {
+		rotate = libwacom_is_reversible(dev);
+		libwacom_destroy(dev);
+		goto out;
+	}
+
+	devices = libwacom_list_devices_from_database(db, NULL);
+	if (!devices)
+		goto out;
+	d = devices;
+	while(*d) {
+		const WacomMatch *paired;
+
+		paired = libwacom_get_paired_device(*d);
+		if (paired &&
+		    libwacom_match_get_vendor_id(paired) == vid &&
+		    libwacom_match_get_product_id(paired) == pid) {
+			rotate = libwacom_is_reversible(dev);
+			break;
+		}
+		d++;
+	}
+
+	free(devices);
+
+out:
+	/* We don't need to keep it around for the touchpad, we're done with
+	 * it until the device dies. */
+	if (db)
+		libinput_libwacom_unref(li);
+#endif
+
+	return rotate;
+}
+
+static void
+tp_init_left_handed(struct tp_dispatch *tp,
+		    struct evdev_device *device)
+{
+	bool want_left_handed = true;
+
+	tp->left_handed.must_rotate = tp_requires_rotation(tp, device);
+
+	if (device->model_flags & EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON)
+		want_left_handed = false;
+	if (want_left_handed)
+		evdev_init_left_handed(device, tp_change_to_left_handed);
+
 }
 
 struct evdev_dispatch *
 evdev_mt_touchpad_create(struct evdev_device *device)
 {
 	struct tp_dispatch *tp;
-	bool want_left_handed = true;
 
 	evdev_tag_touchpad(device, device->udev_device);
 
@@ -3729,10 +3747,7 @@ evdev_mt_touchpad_create(struct evdev_device *device)
 	tp->sendevents.config.get_mode = tp_sendevents_get_mode;
 	tp->sendevents.config.get_default_mode = tp_sendevents_get_default_mode;
 
-	if (device->model_flags & EVDEV_MODEL_APPLE_TOUCHPAD_ONEBUTTON)
-		want_left_handed = false;
-	if (want_left_handed)
-		evdev_init_left_handed(device, tp_change_to_left_handed);
+	tp_init_left_handed(tp, device);
 
 	return &tp->base;
 }

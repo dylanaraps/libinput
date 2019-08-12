@@ -92,6 +92,8 @@ struct libinput_seat;
  *
  * This struct is refcounted, use libinput_tablet_tool_ref() and
  * libinput_tablet_tool_unref().
+ *
+ * @since 1.2
  */
 struct libinput_tablet_tool;
 
@@ -153,6 +155,8 @@ struct libinput_event_touch;
  * LIBINPUT_EVENT_TABLET_TOOL_AXIS, @ref
  * LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY and @ref
  * LIBINPUT_EVENT_TABLET_TOOL_BUTTON.
+ *
+ * @since 1.2
  */
 struct libinput_event_tablet_tool;
 
@@ -164,6 +168,8 @@ struct libinput_event_tablet_tool;
  * the tablet pad itself. Valid event types for this event are @ref
  * LIBINPUT_EVENT_TABLET_PAD_BUTTON, @ref LIBINPUT_EVENT_TABLET_PAD_RING and
  * @ref LIBINPUT_EVENT_TABLET_PAD_STRIP.
+ *
+ * @since 1.3
  */
 struct libinput_event_tablet_pad;
 
@@ -277,6 +283,8 @@ enum libinput_pointer_axis_source {
  *
  * The source for a @ref LIBINPUT_EVENT_TABLET_PAD_RING event. See
  * libinput_event_tablet_pad_get_ring_source() for details.
+ *
+ * @since 1.3
  */
 enum libinput_tablet_pad_ring_axis_source {
 	LIBINPUT_TABLET_PAD_RING_SOURCE_UNKNOWN = 1,
@@ -292,6 +300,8 @@ enum libinput_tablet_pad_ring_axis_source {
  *
  * The source for a @ref LIBINPUT_EVENT_TABLET_PAD_STRIP event. See
  * libinput_event_tablet_pad_get_strip_source() for details.
+ *
+ * @since 1.3
  */
 enum libinput_tablet_pad_strip_axis_source {
 	LIBINPUT_TABLET_PAD_STRIP_SOURCE_UNKNOWN = 1,
@@ -321,6 +331,8 @@ enum libinput_tablet_pad_strip_axis_source {
  * type of the device. For devices with adjustable physical properties
  * the tool type remains the same, i.e. putting a Wacom stroke nib into a
  * classic pen leaves the tool type as @ref LIBINPUT_TABLET_TOOL_TYPE_PEN.
+ *
+ * @since 1.2
  */
 enum libinput_tablet_tool_type {
 	LIBINPUT_TABLET_TOOL_TYPE_PEN = 1,	/**< A generic pen */
@@ -331,6 +343,9 @@ enum libinput_tablet_tool_type {
 	LIBINPUT_TABLET_TOOL_TYPE_AIRBRUSH,	/**< An airbrush-like tool */
 	LIBINPUT_TABLET_TOOL_TYPE_MOUSE,	/**< A mouse bound to the tablet */
 	LIBINPUT_TABLET_TOOL_TYPE_LENS,		/**< A mouse tool with a lens */
+	LIBINPUT_TABLET_TOOL_TYPE_TOTEM,	/**< A rotary device with
+						     positional and rotation
+						     data */
 };
 
 /**
@@ -346,6 +361,8 @@ enum libinput_tablet_tool_type {
  * On some hardware a tool goes out of proximity when it ceases to touch the
  * surface. On other hardware, the tool is still detectable within a short
  * distance (a few cm) off the surface.
+ *
+ * @since 1.2
  */
 enum libinput_tablet_tool_proximity_state {
 	LIBINPUT_TABLET_TOOL_PROXIMITY_STATE_OUT = 0,
@@ -360,6 +377,8 @@ enum libinput_tablet_tool_proximity_state {
  *
  * The tip contact state of a tool is a binary state signalling whether the tool is
  * touching the surface of the tablet device.
+ *
+ * @since 1.2
  */
 enum libinput_tablet_tool_tip_state {
 	LIBINPUT_TABLET_TOOL_TIP_UP = 0,
@@ -390,6 +409,8 @@ enum libinput_tablet_tool_tip_state {
  *
  * This struct is refcounted, use libinput_tablet_pad_mode_group_ref() and
  * libinput_tablet_pad_mode_group_unref().
+ *
+ * @since 1.4
  */
 struct libinput_tablet_pad_mode_group;
 
@@ -405,6 +426,8 @@ struct libinput_tablet_pad_mode_group;
  * ring and strip with the correct mode group.
  *
  * @return the number of mode groups available on this device
+ *
+ * @since 1.4
  */
 int
 libinput_device_tablet_pad_get_num_mode_groups(struct libinput_device *device);
@@ -428,6 +451,8 @@ libinput_device_tablet_pad_get_num_mode_groups(struct libinput_device *device);
  * @param index A mode group index
  * @return the mode group with the given index or NULL if an invalid index
  * is given.
+ *
+ * @since 1.4
  */
 struct libinput_tablet_pad_mode_group*
 libinput_device_tablet_pad_get_mode_group(struct libinput_device *device,
@@ -442,6 +467,8 @@ libinput_device_tablet_pad_get_mode_group(struct libinput_device *device,
  *
  * @param group A previously obtained mode group
  * @return the numeric index this mode group represents, starting at 0
+ *
+ * @since 1.4
  */
 unsigned int
 libinput_tablet_pad_mode_group_get_index(struct libinput_tablet_pad_mode_group *group);
@@ -460,6 +487,8 @@ libinput_tablet_pad_mode_group_get_index(struct libinput_tablet_pad_mode_group *
  *
  * @param group A previously obtained mode group
  * @return the number of modes available in this mode group
+ *
+ * @since 1.4
  */
 unsigned int
 libinput_tablet_pad_mode_group_get_num_modes(struct libinput_tablet_pad_mode_group *group);
@@ -480,6 +509,8 @@ libinput_tablet_pad_mode_group_get_num_modes(struct libinput_tablet_pad_mode_gro
  * @return the numeric index of the current mode in this group, starting at 0
  *
  * @see libinput_event_tablet_pad_get_mode
+ *
+ * @since 1.4
  */
 unsigned int
 libinput_tablet_pad_mode_group_get_mode(struct libinput_tablet_pad_mode_group *group);
@@ -493,6 +524,8 @@ libinput_tablet_pad_mode_group_get_mode(struct libinput_tablet_pad_mode_group *g
  * @param button A button index, starting at 0
  * @return true if the given button index is part of this mode group or
  * false otherwise
+ *
+ * @since 1.4
  */
 int
 libinput_tablet_pad_mode_group_has_button(struct libinput_tablet_pad_mode_group *group,
@@ -507,6 +540,8 @@ libinput_tablet_pad_mode_group_has_button(struct libinput_tablet_pad_mode_group 
  * @param ring A ring index, starting at 0
  * @return true if the given ring index is part of this mode group or
  * false otherwise
+ *
+ * @since 1.4
  */
 int
 libinput_tablet_pad_mode_group_has_ring(struct libinput_tablet_pad_mode_group *group,
@@ -521,6 +556,8 @@ libinput_tablet_pad_mode_group_has_ring(struct libinput_tablet_pad_mode_group *g
  * @param strip A strip index, starting at 0
  * @return true if the given strip index is part of this mode group or
  * false otherwise
+ *
+ * @since 1.4
  */
 int
 libinput_tablet_pad_mode_group_has_strip(struct libinput_tablet_pad_mode_group *group,
@@ -541,6 +578,8 @@ libinput_tablet_pad_mode_group_has_strip(struct libinput_tablet_pad_mode_group *
  * @param button A button index, starting at 0
  * @retval non-zero if the button is a mode toggle button for this group, or
  * zero otherwise
+ *
+ * @since 1.4
  */
 int
 libinput_tablet_pad_mode_group_button_is_toggle(struct libinput_tablet_pad_mode_group *group,
@@ -554,6 +593,8 @@ libinput_tablet_pad_mode_group_button_is_toggle(struct libinput_tablet_pad_mode_
  *
  * @param group A previously obtained mode group
  * @return The passed mode group
+ *
+ * @since 1.4
  */
 struct libinput_tablet_pad_mode_group *
 libinput_tablet_pad_mode_group_ref(
@@ -567,6 +608,8 @@ libinput_tablet_pad_mode_group_ref(
  *
  * @param group A previously obtained mode group
  * @return NULL if the group was destroyed, otherwise the passed mode group
+ *
+ * @since 1.4
  */
 struct libinput_tablet_pad_mode_group *
 libinput_tablet_pad_mode_group_unref(
@@ -583,6 +626,7 @@ libinput_tablet_pad_mode_group_unref(
  * @param user_data Caller-specific data pointer
  * @see libinput_tablet_pad_mode_group_get_user_data
  *
+ * @since 1.4
  */
 void
 libinput_tablet_pad_mode_group_set_user_data(
@@ -597,6 +641,8 @@ libinput_tablet_pad_mode_group_set_user_data(
  * @param group A previously obtained mode group
  * @return Caller-specific data pointer or NULL if none was set
  * @see libinput_tablet_pad_mode_group_set_user_data
+ *
+ * @since 1.4
  */
 void *
 libinput_tablet_pad_mode_group_get_user_data(
@@ -610,6 +656,8 @@ libinput_tablet_pad_mode_group_get_user_data(
  * off position. If a switch is logically on during initialization, libinput
  * sends an event of type @ref LIBINPUT_EVENT_SWITCH_TOGGLE with a state
  * @ref LIBINPUT_SWITCH_STATE_ON.
+ *
+ * @since 1.7
  */
 enum libinput_switch_state {
 	LIBINPUT_SWITCH_STATE_OFF = 0,
@@ -620,6 +668,8 @@ enum libinput_switch_state {
  * @ingroup device
  *
  * The type of a switch.
+ *
+ * @since 1.7
  */
 enum libinput_switch {
 	/**
@@ -651,6 +701,8 @@ enum libinput_switch {
  * @struct libinput_event_switch
  *
  * A switch event representing a changed state in a switch.
+ *
+ * @since 1.7
  */
 struct libinput_event_switch;
 
@@ -716,6 +768,8 @@ enum libinput_event_type {
 	 * An event of type @ref LIBINPUT_EVENT_TABLET_TOOL_AXIS is sent
 	 * when the tip state does not change. See the documentation for
 	 * @ref LIBINPUT_EVENT_TABLET_TOOL_TIP for more details.
+	 *
+	 * @since 1.2
 	 */
 	LIBINPUT_EVENT_TABLET_TOOL_AXIS = 600,
 	/**
@@ -741,6 +795,8 @@ enum libinput_event_type {
 	 * down on the stylus are marked as released. Button release events for
 	 * each button that was held down on the stylus are sent before the
 	 * proximity out event.
+	 *
+	 * @since 1.2
 	 */
 	LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY,
 	/**
@@ -764,6 +820,8 @@ enum libinput_event_type {
 	 *
 	 * If a button state change occurs at the same time as a tip state
 	 * change, the order of events is device-dependent.
+	 *
+	 * @since 1.2
 	 */
 	LIBINPUT_EVENT_TABLET_TOOL_TIP,
 	/**
@@ -780,6 +838,8 @@ enum libinput_event_type {
 	 * by the tablet pad. See @ref LIBINPUT_EVENT_TABLET_PAD_BUTTON.
 	 *
 	 * @see LIBINPUT_EVENT_TABLET_BUTTON
+	 *
+	 * @since 1.2
 	 */
 	LIBINPUT_EVENT_TABLET_TOOL_BUTTON,
 
@@ -789,17 +849,23 @@ enum libinput_event_type {
 	 *
 	 * This event is not to be confused with the button events emitted
 	 * by tools on a tablet (@ref LIBINPUT_EVENT_TABLET_TOOL_BUTTON).
+	 *
+	 * @since 1.3
 	 */
 	LIBINPUT_EVENT_TABLET_PAD_BUTTON = 700,
 	/**
 	 * A status change on a tablet ring with the @ref
 	 * LIBINPUT_DEVICE_CAP_TABLET_PAD capability.
+	 *
+	 * @since 1.3
 	 */
 	LIBINPUT_EVENT_TABLET_PAD_RING,
 
 	/**
 	 * A status change on a strip on a device with the @ref
 	 * LIBINPUT_DEVICE_CAP_TABLET_PAD capability.
+	 *
+	 * @since 1.3
 	 */
 	LIBINPUT_EVENT_TABLET_PAD_STRIP,
 
@@ -810,6 +876,9 @@ enum libinput_event_type {
 	LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
 	LIBINPUT_EVENT_GESTURE_PINCH_END,
 
+	/**
+	 * @since 1.7
+	 */
 	LIBINPUT_EVENT_SWITCH_TOGGLE = 900,
 };
 
@@ -937,6 +1006,8 @@ libinput_event_get_gesture_event(struct libinput_event *event);
  * The inverse of this function is libinput_event_tablet_tool_get_base_event().
  *
  * @return A tablet tool event, or NULL for other events
+ *
+ * @since 1.2
  */
 struct libinput_event_tablet_tool *
 libinput_event_get_tablet_tool_event(struct libinput_event *event);
@@ -963,6 +1034,8 @@ libinput_event_get_tablet_pad_event(struct libinput_event *event);
  * The inverse of this function is libinput_event_switch_get_base_event().
  *
  * @return A switch event, or NULL for other events
+ *
+ * @since 1.7
  */
 struct libinput_event_switch *
 libinput_event_get_switch_event(struct libinput_event *event);
@@ -1825,6 +1898,8 @@ libinput_event_gesture_get_angle_delta(struct libinput_event_gesture *event);
  * @ingroup event_tablet
  *
  * @return The generic libinput_event of this event
+ *
+ * @since 1.2
  */
 struct libinput_event *
 libinput_event_tablet_tool_get_base_event(struct libinput_event_tablet_tool *event);
@@ -1845,6 +1920,8 @@ libinput_event_tablet_tool_get_base_event(struct libinput_event_tablet_tool *eve
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_x_has_changed(
@@ -1866,6 +1943,8 @@ libinput_event_tablet_tool_x_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_y_has_changed(
@@ -1887,6 +1966,8 @@ libinput_event_tablet_tool_y_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_pressure_has_changed(
@@ -1910,6 +1991,8 @@ libinput_event_tablet_tool_pressure_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_distance_has_changed(
@@ -1931,6 +2014,8 @@ libinput_event_tablet_tool_distance_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_tilt_x_has_changed(
@@ -1952,6 +2037,8 @@ libinput_event_tablet_tool_tilt_x_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_tilt_y_has_changed(
@@ -1972,6 +2059,8 @@ libinput_event_tablet_tool_tilt_y_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_rotation_has_changed(
@@ -1992,10 +2081,55 @@ libinput_event_tablet_tool_rotation_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_slider_has_changed(
 				struct libinput_event_tablet_tool *event);
+
+/**
+ * @ingroup event_tablet
+ *
+ * Check if the size major axis was updated in this event.
+ * For events that are not of type @ref LIBINPUT_EVENT_TABLET_TOOL_AXIS,
+ * @ref LIBINPUT_EVENT_TABLET_TOOL_TIP, or
+ * @ref LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY, this function returns 0.
+ *
+ * @note It is an application bug to call this function for events other
+ * than @ref LIBINPUT_EVENT_TABLET_TOOL_AXIS, @ref
+ * LIBINPUT_EVENT_TABLET_TOOL_TIP, or @ref
+ * LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY, or @ref
+ * LIBINPUT_EVENT_TABLET_TOOL_BUTTON.
+ *
+ * @param event The libinput tablet tool event
+ * @return 1 if the axis was updated or 0 otherwise
+ */
+int
+libinput_event_tablet_tool_size_major_has_changed(
+				struct libinput_event_tablet_tool *event);
+
+/**
+ * @ingroup event_tablet
+ *
+ * Check if the size minor axis was updated in this event.
+ * For events that are not of type @ref LIBINPUT_EVENT_TABLET_TOOL_AXIS,
+ * @ref LIBINPUT_EVENT_TABLET_TOOL_TIP, or
+ * @ref LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY, this function returns 0.
+ *
+ * @note It is an application bug to call this function for events other
+ * than @ref LIBINPUT_EVENT_TABLET_TOOL_AXIS, @ref
+ * LIBINPUT_EVENT_TABLET_TOOL_TIP, or @ref
+ * LIBINPUT_EVENT_TABLET_TOOL_PROXIMITY, or @ref
+ * LIBINPUT_EVENT_TABLET_TOOL_BUTTON.
+ *
+ * @param event The libinput tablet tool event
+ * @return 1 if the axis was updated or 0 otherwise
+ */
+int
+libinput_event_tablet_tool_size_minor_has_changed(
+				struct libinput_event_tablet_tool *event);
+
 /**
  * @ingroup event_tablet
  *
@@ -2012,6 +2146,8 @@ libinput_event_tablet_tool_slider_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return 1 if the axis was updated or 0 otherwise
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_wheel_has_changed(
@@ -2030,6 +2166,8 @@ libinput_event_tablet_tool_wheel_has_changed(
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_x(struct libinput_event_tablet_tool *event);
@@ -2047,6 +2185,8 @@ libinput_event_tablet_tool_get_x(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_y(struct libinput_event_tablet_tool *event);
@@ -2064,6 +2204,8 @@ libinput_event_tablet_tool_get_y(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet event
  * @return The relative x movement since the last event
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_dx(struct libinput_event_tablet_tool *event);
@@ -2081,6 +2223,8 @@ libinput_event_tablet_tool_get_dx(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet event
  * @return The relative y movement since the last event
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_dy(struct libinput_event_tablet_tool *event);
@@ -2095,6 +2239,8 @@ libinput_event_tablet_tool_get_dy(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_pressure(struct libinput_event_tablet_tool *event);
@@ -2109,6 +2255,8 @@ libinput_event_tablet_tool_get_pressure(struct libinput_event_tablet_tool *event
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_distance(struct libinput_event_tablet_tool *event);
@@ -2127,6 +2275,8 @@ libinput_event_tablet_tool_get_distance(struct libinput_event_tablet_tool *event
  *
  * @param event The libinput tablet tool event
  * @return The current value of the axis in degrees
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_tilt_x(struct libinput_event_tablet_tool *event);
@@ -2145,6 +2295,8 @@ libinput_event_tablet_tool_get_tilt_x(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis in degrees
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_tilt_y(struct libinput_event_tablet_tool *event);
@@ -2165,6 +2317,8 @@ libinput_event_tablet_tool_get_tilt_y(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_rotation(struct libinput_event_tablet_tool *event);
@@ -2181,9 +2335,47 @@ libinput_event_tablet_tool_get_rotation(struct libinput_event_tablet_tool *event
  *
  * @param event The libinput tablet tool event
  * @return The current value of the the axis
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_slider_position(struct libinput_event_tablet_tool *event);
+
+/**
+ * @ingroup event_tablet
+ *
+ * Returns the current size in mm along the major axis of the touching
+ * ellipse. This axis is not necessarily aligned with either x or y, the
+ * rotation must be taken into account.
+ *
+ * Where no rotation is available on a tool, or where rotation is zero, the
+ * major axis aligns with the y axis and the minor axis with the x axis.
+ *
+ * If this axis does not exist on the current tool, this function returns 0.
+ *
+ * @param event The libinput tablet tool event
+ * @return The current value of the axis major in mm
+ */
+double
+libinput_event_tablet_tool_get_size_major(struct libinput_event_tablet_tool *event);
+
+/**
+ * @ingroup event_tablet
+ *
+ * Returns the current size in mm along the minor axis of the touching
+ * ellipse. This axis is not necessarily aligned with either x or y, the
+ * rotation must be taken into account.
+ *
+ * Where no rotation is available on a tool, or where rotation is zero, the
+ * minor axis aligns with the y axis and the minor axis with the x axis.
+ *
+ * If this axis does not exist on the current tool, this function returns 0.
+ *
+ * @param event The libinput tablet tool event
+ * @return The current value of the axis minor in mm
+ */
+double
+libinput_event_tablet_tool_get_size_minor(struct libinput_event_tablet_tool *event);
 
 /**
  * @ingroup event_tablet
@@ -2208,6 +2400,8 @@ libinput_event_tablet_tool_get_wheel_delta(
  * @return The delta of the wheel, in discrete steps, compared to the last event
  *
  * @see libinput_event_tablet_tool_get_wheel_delta_discrete
+ *
+ * @since 1.2
  */
 int
 libinput_event_tablet_tool_get_wheel_delta_discrete(
@@ -2229,6 +2423,8 @@ libinput_event_tablet_tool_get_wheel_delta_discrete(
  * @param event The libinput tablet tool event
  * @param width The current output screen width
  * @return the current absolute x coordinate transformed to a screen coordinate
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_x_transformed(struct libinput_event_tablet_tool *event,
@@ -2250,6 +2446,8 @@ libinput_event_tablet_tool_get_x_transformed(struct libinput_event_tablet_tool *
  * @param event The libinput tablet tool event
  * @param height The current output screen height
  * @return the current absolute y coordinate transformed to a screen coordinate
+ *
+ * @since 1.2
  */
 double
 libinput_event_tablet_tool_get_y_transformed(struct libinput_event_tablet_tool *event,
@@ -2274,6 +2472,8 @@ libinput_event_tablet_tool_get_y_transformed(struct libinput_event_tablet_tool *
  *
  * @param event The libinput tablet tool event
  * @return The new tool triggering this event
+ *
+ * @since 1.2
  */
 struct libinput_tablet_tool *
 libinput_event_tablet_tool_get_tool(struct libinput_event_tablet_tool *event);
@@ -2301,6 +2501,8 @@ libinput_event_tablet_tool_get_tool(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return The new proximity state of the tool from the event.
+ *
+ * @since 1.2
  */
 enum libinput_tablet_tool_proximity_state
 libinput_event_tablet_tool_get_proximity_state(struct libinput_event_tablet_tool *event);
@@ -2315,6 +2517,8 @@ libinput_event_tablet_tool_get_proximity_state(struct libinput_event_tablet_tool
  *
  * @param event The libinput tablet tool event
  * @return The new tip state of the tool from the event.
+ *
+ * @since 1.2
  */
 enum libinput_tablet_tool_tip_state
 libinput_event_tablet_tool_get_tip_state(struct libinput_event_tablet_tool *event);
@@ -2330,6 +2534,8 @@ libinput_event_tablet_tool_get_tip_state(struct libinput_event_tablet_tool *even
  *
  * @param event The libinput tablet tool event
  * @return the button triggering this event
+ *
+ * @since 1.2
  */
 uint32_t
 libinput_event_tablet_tool_get_button(struct libinput_event_tablet_tool *event);
@@ -2344,6 +2550,8 @@ libinput_event_tablet_tool_get_button(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return the button state triggering this event
+ *
+ * @since 1.2
  */
 enum libinput_button_state
 libinput_event_tablet_tool_get_button_state(struct libinput_event_tablet_tool *event);
@@ -2360,6 +2568,8 @@ libinput_event_tablet_tool_get_button_state(struct libinput_event_tablet_tool *e
  *
  * @param event The libinput tablet tool event
  * @return the seat wide pressed button count for the key of this event
+ *
+ * @since 1.2
  */
 uint32_t
 libinput_event_tablet_tool_get_seat_button_count(struct libinput_event_tablet_tool *event);
@@ -2372,6 +2582,8 @@ libinput_event_tablet_tool_get_seat_button_count(struct libinput_event_tablet_to
  *
  * @param event The libinput tablet tool event
  * @return The event time for this event
+ *
+ * @since 1.2
  */
 uint32_t
 libinput_event_tablet_tool_get_time(struct libinput_event_tablet_tool *event);
@@ -2384,6 +2596,8 @@ libinput_event_tablet_tool_get_time(struct libinput_event_tablet_tool *event);
  *
  * @param event The libinput tablet tool event
  * @return The event time for this event in microseconds
+ *
+ * @since 1.2
  */
 uint64_t
 libinput_event_tablet_tool_get_time_usec(struct libinput_event_tablet_tool *event);
@@ -2408,6 +2622,8 @@ libinput_event_tablet_tool_get_time_usec(struct libinput_event_tablet_tool *even
  * @return The tool type for this tool object
  *
  * @see libinput_tablet_tool_get_tool_id
+ *
+ * @since 1.2
  */
 enum libinput_tablet_tool_type
 libinput_tablet_tool_get_type(struct libinput_tablet_tool *tool);
@@ -2428,6 +2644,8 @@ libinput_tablet_tool_get_type(struct libinput_tablet_tool *tool);
  * @return The tool ID for this tool object or 0 if none is provided
  *
  * @see libinput_tablet_tool_get_type
+ *
+ * @since 1.2
  */
 uint64_t
 libinput_tablet_tool_get_tool_id(struct libinput_tablet_tool *tool);
@@ -2442,6 +2660,8 @@ libinput_tablet_tool_get_tool_id(struct libinput_tablet_tool *tool);
  * @return The passed tool
  *
  * @see libinput_tablet_tool_unref
+ *
+ * @since 1.2
  */
 struct libinput_tablet_tool *
 libinput_tablet_tool_ref(struct libinput_tablet_tool *tool);
@@ -2457,6 +2677,8 @@ libinput_tablet_tool_ref(struct libinput_tablet_tool *tool);
  * @return NULL if the tool was destroyed otherwise the passed tool
  *
  * @see libinput_tablet_tool_ref
+ *
+ * @since 1.2
  */
 struct libinput_tablet_tool *
 libinput_tablet_tool_unref(struct libinput_tablet_tool *tool);
@@ -2468,6 +2690,8 @@ libinput_tablet_tool_unref(struct libinput_tablet_tool *tool);
  *
  * @param tool The tool to check the axis capabilities of
  * @return Nonzero if the axis is available, zero otherwise.
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_pressure(struct libinput_tablet_tool *tool);
@@ -2479,6 +2703,8 @@ libinput_tablet_tool_has_pressure(struct libinput_tablet_tool *tool);
  *
  * @param tool The tool to check the axis capabilities of
  * @return Nonzero if the axis is available, zero otherwise.
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_distance(struct libinput_tablet_tool *tool);
@@ -2490,6 +2716,8 @@ libinput_tablet_tool_has_distance(struct libinput_tablet_tool *tool);
  *
  * @param tool The tool to check the axis capabilities of
  * @return Nonzero if the axis is available, zero otherwise.
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_tilt(struct libinput_tablet_tool *tool);
@@ -2501,6 +2729,8 @@ libinput_tablet_tool_has_tilt(struct libinput_tablet_tool *tool);
  *
  * @param tool The tool to check the axis capabilities of
  * @return Nonzero if the axis is available, zero otherwise.
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_rotation(struct libinput_tablet_tool *tool);
@@ -2512,9 +2742,25 @@ libinput_tablet_tool_has_rotation(struct libinput_tablet_tool *tool);
  *
  * @param tool The tool to check the axis capabilities of
  * @return Nonzero if the axis is available, zero otherwise.
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_slider(struct libinput_tablet_tool *tool);
+
+/**
+ * @ingroup event_tablet
+ *
+ * Return whether the tablet tool has a ellipsis major and minor.
+ * Where the underlying hardware only supports one of either major or minor,
+ * libinput emulates the other axis as a circular contact, i.e. major ==
+ * minor for all values of major.
+ *
+ * @param tool The tool to check the axis capabilities of
+ * @return Nonzero if the axis is available, zero otherwise.
+ */
+int
+libinput_tablet_tool_has_size(struct libinput_tablet_tool *tool);
 
 /**
  * @ingroup event_tablet
@@ -2523,6 +2769,8 @@ libinput_tablet_tool_has_slider(struct libinput_tablet_tool *tool);
  *
  * @param tool The tool to check the axis capabilities of
  * @return Nonzero if the axis is available, zero otherwise.
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_wheel(struct libinput_tablet_tool *tool);
@@ -2537,6 +2785,8 @@ libinput_tablet_tool_has_wheel(struct libinput_tablet_tool *tool);
  * @param code button code to check for
  *
  * @return 1 if the tool supports this button code, 0 if it does not
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_has_button(struct libinput_tablet_tool *tool,
@@ -2555,6 +2805,8 @@ libinput_tablet_tool_has_button(struct libinput_tablet_tool *tool,
  * @return 1 if the tool can be uniquely identified, 0 otherwise.
  *
  * @see libinput_tablet_tool_get_serial
+ *
+ * @since 1.2
  */
 int
 libinput_tablet_tool_is_unique(struct libinput_tablet_tool *tool);
@@ -2592,6 +2844,8 @@ libinput_tablet_tool_is_unique(struct libinput_tablet_tool *tool);
  * @return The tool serial number
  *
  * @see libinput_tablet_tool_is_unique
+ *
+ * @since 1.2
  */
 uint64_t
 libinput_tablet_tool_get_serial(struct libinput_tablet_tool *tool);
@@ -2605,6 +2859,8 @@ libinput_tablet_tool_get_serial(struct libinput_tablet_tool *tool);
  *
  * @param tool The libinput tool
  * @return The user data associated with the tool object
+ *
+ * @since 1.2
  */
 void *
 libinput_tablet_tool_get_user_data(struct libinput_tablet_tool *tool);
@@ -2616,6 +2872,8 @@ libinput_tablet_tool_get_user_data(struct libinput_tablet_tool *tool);
  *
  * @param tool The libinput tool
  * @param user_data The user data to associate with the tool object
+ *
+ * @since 1.2
  */
 void
 libinput_tablet_tool_set_user_data(struct libinput_tablet_tool *tool,
@@ -2626,12 +2884,16 @@ libinput_tablet_tool_set_user_data(struct libinput_tablet_tool *tool,
  *
  * Events that come from the pad of tablet devices.  For events from the
  * tablet tools, see @ref event_tablet.
+ *
+ * @since 1.3
  */
 
 /**
  * @ingroup event_tablet_pad
  *
  * @return The generic libinput_event of this event
+ *
+ * @since 1.3
  */
 struct libinput_event *
 libinput_event_tablet_pad_get_base_event(struct libinput_event_tablet_pad *event);
@@ -2655,6 +2917,8 @@ libinput_event_tablet_pad_get_base_event(struct libinput_event_tablet_pad *event
  * @param event The libinput tablet pad event
  * @return The current value of the the axis
  * @retval -1 The finger was lifted
+ *
+ * @since 1.3
  */
 double
 libinput_event_tablet_pad_get_ring_position(struct libinput_event_tablet_pad *event);
@@ -2672,6 +2936,8 @@ libinput_event_tablet_pad_get_ring_position(struct libinput_event_tablet_pad *ev
  *
  * @param event The libinput tablet pad event
  * @return The index of the ring that changed state
+ *
+ * @since 1.3
  */
 unsigned int
 libinput_event_tablet_pad_get_ring_number(struct libinput_event_tablet_pad *event);
@@ -2689,6 +2955,8 @@ libinput_event_tablet_pad_get_ring_number(struct libinput_event_tablet_pad *even
  *
  * @param event The libinput tablet pad event
  * @return The source of the ring interaction
+ *
+ * @since 1.3
  */
 enum libinput_tablet_pad_ring_axis_source
 libinput_event_tablet_pad_get_ring_source(struct libinput_event_tablet_pad *event);
@@ -2712,6 +2980,8 @@ libinput_event_tablet_pad_get_ring_source(struct libinput_event_tablet_pad *even
  * @param event The libinput tablet pad event
  * @return The current value of the the axis
  * @retval -1 The finger was lifted
+ *
+ * @since 1.3
  */
 double
 libinput_event_tablet_pad_get_strip_position(struct libinput_event_tablet_pad *event);
@@ -2729,6 +2999,8 @@ libinput_event_tablet_pad_get_strip_position(struct libinput_event_tablet_pad *e
  *
  * @param event The libinput tablet pad event
  * @return The index of the strip that changed state
+ *
+ * @since 1.3
  */
 unsigned int
 libinput_event_tablet_pad_get_strip_number(struct libinput_event_tablet_pad *event);
@@ -2746,6 +3018,8 @@ libinput_event_tablet_pad_get_strip_number(struct libinput_event_tablet_pad *eve
  *
  * @param event The libinput tablet pad event
  * @return The source of the strip interaction
+ *
+ * @since 1.3
  */
 enum libinput_tablet_pad_strip_axis_source
 libinput_event_tablet_pad_get_strip_source(struct libinput_event_tablet_pad *event);
@@ -2767,6 +3041,8 @@ libinput_event_tablet_pad_get_strip_source(struct libinput_event_tablet_pad *eve
  *
  * @param event The libinput tablet pad event
  * @return the button triggering this event
+ *
+ * @since 1.3
  */
 uint32_t
 libinput_event_tablet_pad_get_button_number(struct libinput_event_tablet_pad *event);
@@ -2782,6 +3058,8 @@ libinput_event_tablet_pad_get_button_number(struct libinput_event_tablet_pad *ev
  *
  * @param event The libinput tablet pad event
  * @return the button state triggering this event
+ *
+ * @since 1.3
  */
 enum libinput_button_state
 libinput_event_tablet_pad_get_button_state(struct libinput_event_tablet_pad *event);
@@ -2812,6 +3090,8 @@ libinput_event_tablet_pad_get_button_state(struct libinput_event_tablet_pad *eve
  * the event
  *
  * @see libinput_tablet_pad_mode_group_get_mode
+ *
+ * @since 1.4
  */
 unsigned int
 libinput_event_tablet_pad_get_mode(struct libinput_event_tablet_pad *event);
@@ -2833,6 +3113,8 @@ libinput_event_tablet_pad_get_mode(struct libinput_event_tablet_pad *event);
  * @return the mode group of the button, ring or strip that caused this event
  *
  * @see libinput_device_tablet_pad_get_mode_group
+ *
+ * @since 1.4
  */
 struct libinput_tablet_pad_mode_group *
 libinput_event_tablet_pad_get_mode_group(struct libinput_event_tablet_pad *event);
@@ -2845,6 +3127,8 @@ libinput_event_tablet_pad_get_mode_group(struct libinput_event_tablet_pad *event
  *
  * @param event The libinput tablet pad event
  * @return The event time for this event
+ *
+ * @since 1.3
  */
 uint32_t
 libinput_event_tablet_pad_get_time(struct libinput_event_tablet_pad *event);
@@ -2857,6 +3141,8 @@ libinput_event_tablet_pad_get_time(struct libinput_event_tablet_pad *event);
  *
  * @param event The libinput tablet pad event
  * @return The event time for this event in microseconds
+ *
+ * @since 1.3
  */
 uint64_t
 libinput_event_tablet_pad_get_time_usec(struct libinput_event_tablet_pad *event);
@@ -2879,6 +3165,8 @@ libinput_event_tablet_pad_get_time_usec(struct libinput_event_tablet_pad *event)
  *
  * @param event The libinput switch event
  * @return The switch triggering this event
+ *
+ * @since 1.7
  */
 enum libinput_switch
 libinput_event_switch_get_switch(struct libinput_event_switch *event);
@@ -2895,6 +3183,8 @@ libinput_event_switch_get_switch(struct libinput_event_switch *event);
  *
  * @param event The libinput switch event
  * @return The switch state triggering this event
+ *
+ * @since 1.7
  */
 enum libinput_switch_state
 libinput_event_switch_get_switch_state(struct libinput_event_switch *event);
@@ -2903,6 +3193,8 @@ libinput_event_switch_get_switch_state(struct libinput_event_switch *event);
  * @ingroup event_switch
  *
  * @return The generic libinput_event of this event
+ *
+ * @since 1.7
  */
 struct libinput_event *
 libinput_event_switch_get_base_event(struct libinput_event_switch *event);
@@ -2915,6 +3207,8 @@ libinput_event_switch_get_base_event(struct libinput_event_switch *event);
  *
  * @param event The libinput switch event
  * @return The event time for this event
+ *
+ * @since 1.7
  */
 uint32_t
 libinput_event_switch_get_time(struct libinput_event_switch *event);
@@ -2927,6 +3221,8 @@ libinput_event_switch_get_time(struct libinput_event_switch *event);
  *
  * @param event The libinput switch event
  * @return The event time for this event in microseconds
+ *
+ * @since 1.7
  */
 uint64_t
 libinput_event_switch_get_time_usec(struct libinput_event_switch *event);
@@ -3826,6 +4122,8 @@ libinput_device_keyboard_has_key(struct libinput_device *device,
  *
  * @return The number of simultaneous touches or 0 if unknown, -1
  * on error.
+ *
+ * @since 1.11
  */
 int
 libinput_device_touch_get_touch_count(struct libinput_device *device);
@@ -3841,6 +4139,8 @@ libinput_device_touch_get_touch_count(struct libinput_device *device);
  *
  * @return 1 if the device supports this switch, 0 if it does not, -1
  * on error.
+ *
+ * @since 1.9
  */
 int
 libinput_device_switch_has_switch(struct libinput_device *device,
@@ -3857,6 +4157,8 @@ libinput_device_switch_has_switch(struct libinput_device *device,
  * @param device A current input device
  *
  * @return The number of buttons supported by the device.
+ *
+ * @since 1.3
  */
 int
 libinput_device_tablet_pad_get_num_buttons(struct libinput_device *device);
@@ -3872,6 +4174,8 @@ libinput_device_tablet_pad_get_num_buttons(struct libinput_device *device);
  * @return The number of rings or 0 if the device has no rings.
  *
  * @see libinput_event_tablet_pad_get_ring_number
+ *
+ * @since 1.3
  */
 int
 libinput_device_tablet_pad_get_num_rings(struct libinput_device *device);
@@ -3887,6 +4191,8 @@ libinput_device_tablet_pad_get_num_rings(struct libinput_device *device);
  * @return The number of strips or 0 if the device has no strips.
  *
  * @see libinput_event_tablet_pad_get_strip_number
+ *
+ * @since 1.3
  */
 int
 libinput_device_tablet_pad_get_num_strips(struct libinput_device *device);
@@ -4105,6 +4411,8 @@ libinput_device_config_tap_get_default_enabled(struct libinput_device *device);
 
 /**
  * @ingroup config
+ *
+ * @since 1.5
  */
 enum libinput_config_tap_button_map {
 	/** 1/2/3 finger tap maps to left/right/middle */
@@ -4140,6 +4448,8 @@ enum libinput_config_tap_button_map {
  *
  * @see libinput_device_config_tap_get_button_map
  * @see libinput_device_config_tap_get_default_button_map
+ *
+ * @since 1.5
  */
 enum libinput_config_status
 libinput_device_config_tap_set_button_map(struct libinput_device *device,
@@ -4161,6 +4471,8 @@ libinput_device_config_tap_set_button_map(struct libinput_device *device,
  *
  * @see libinput_device_config_tap_set_button_map
  * @see libinput_device_config_tap_get_default_button_map
+ *
+ * @since 1.5
  */
 enum libinput_config_tap_button_map
 libinput_device_config_tap_get_button_map(struct libinput_device *device);
@@ -4181,6 +4493,8 @@ libinput_device_config_tap_get_button_map(struct libinput_device *device);
  *
  * @see libinput_device_config_tap_set_button_map
  * @see libinput_device_config_tap_get_default_button_map
+ *
+ * @since 1.5
  */
 enum libinput_config_tap_button_map
 libinput_device_config_tap_get_default_button_map(struct libinput_device *device);
@@ -4191,6 +4505,8 @@ libinput_device_config_tap_get_default_button_map(struct libinput_device *device
  * A config status to distinguish or set dragging on a device. Currently
  * implemented for tap-and-drag only, see
  * libinput_device_config_tap_set_drag_enabled()
+ *
+ * @since 1.2
  */
 enum libinput_config_drag_state {
 	/**
@@ -4220,6 +4536,8 @@ enum libinput_config_drag_state {
  *
  * @see libinput_device_config_tap_drag_get_enabled
  * @see libinput_device_config_tap_drag_get_default_enabled
+ *
+ * @since 1.2
  */
 enum libinput_config_status
 libinput_device_config_tap_set_drag_enabled(struct libinput_device *device,
@@ -4237,6 +4555,8 @@ libinput_device_config_tap_set_drag_enabled(struct libinput_device *device,
  *
  * @see libinput_device_config_tap_drag_set_enabled
  * @see libinput_device_config_tap_drag_get_default_enabled
+ *
+ * @since 1.2
  */
 enum libinput_config_drag_state
 libinput_device_config_tap_get_drag_enabled(struct libinput_device *device);
@@ -4255,6 +4575,8 @@ libinput_device_config_tap_get_drag_enabled(struct libinput_device *device);
  *
  * @see libinput_device_config_tap_drag_set_enabled
  * @see libinput_device_config_tap_drag_get_enabled
+ *
+ * @since 1.2
  */
 enum libinput_config_drag_state
 libinput_device_config_tap_get_default_drag_enabled(struct libinput_device *device);
@@ -4649,6 +4971,8 @@ libinput_device_config_accel_get_default_speed(struct libinput_device *device);
 
 /**
  * @ingroup config
+ *
+ * @since 1.1
  */
 enum libinput_config_accel_profile {
 	/**
@@ -4681,6 +5005,8 @@ enum libinput_config_accel_profile {
  * @param device The device to configure
  *
  * @return A bitmask of all configurable modes available on this device.
+ *
+ * @since 1.1
  */
 uint32_t
 libinput_device_config_accel_get_profiles(struct libinput_device *device);
@@ -4695,6 +5021,8 @@ libinput_device_config_accel_get_profiles(struct libinput_device *device);
  * @param mode The mode to set the device to.
  *
  * @return A config status code
+ *
+ * @since 1.1
  */
 enum libinput_config_status
 libinput_device_config_accel_set_profile(struct libinput_device *device,
@@ -4708,6 +5036,8 @@ libinput_device_config_accel_set_profile(struct libinput_device *device,
  * @param device The device to configure
  *
  * @return The currently configured pointer acceleration profile.
+ *
+ * @since 1.1
  */
 enum libinput_config_accel_profile
 libinput_device_config_accel_get_profile(struct libinput_device *device);
@@ -4720,6 +5050,8 @@ libinput_device_config_accel_get_profile(struct libinput_device *device);
  * @param device The device to configure
  *
  * @return The default acceleration profile for this device.
+ *
+ * @since 1.1
  */
 enum libinput_config_accel_profile
 libinput_device_config_accel_get_default_profile(struct libinput_device *device);
@@ -5406,6 +5738,8 @@ libinput_device_config_dwt_get_default_enabled(struct libinput_device *device);
  * @see libinput_device_config_rotation_set_angle
  * @see libinput_device_config_rotation_get_angle
  * @see libinput_device_config_rotation_get_default_angle
+ *
+ * @since 1.4
  */
 int
 libinput_device_config_rotation_is_available(struct libinput_device *device);
@@ -5439,6 +5773,8 @@ libinput_device_config_rotation_is_available(struct libinput_device *device);
  * @see libinput_device_config_rotation_is_available
  * @see libinput_device_config_rotation_get_angle
  * @see libinput_device_config_rotation_get_default_angle
+ *
+ * @since 1.4
  */
 enum libinput_config_status
 libinput_device_config_rotation_set_angle(struct libinput_device *device,
@@ -5457,6 +5793,8 @@ libinput_device_config_rotation_set_angle(struct libinput_device *device,
  * @see libinput_device_config_rotation_is_available
  * @see libinput_device_config_rotation_set_angle
  * @see libinput_device_config_rotation_get_default_angle
+ *
+ * @since 1.4
  */
 unsigned int
 libinput_device_config_rotation_get_angle(struct libinput_device *device);
@@ -5474,6 +5812,8 @@ libinput_device_config_rotation_get_angle(struct libinput_device *device);
  * @see libinput_device_config_rotation_is_available
  * @see libinput_device_config_rotation_set_angle
  * @see libinput_device_config_rotation_get_angle
+ *
+ * @since 1.4
  */
 unsigned int
 libinput_device_config_rotation_get_default_angle(struct libinput_device *device);

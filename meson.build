@@ -1,5 +1,5 @@
 project('libinput', 'c',
-	version : '1.13.0',
+	version : '1.14.0',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
@@ -148,8 +148,8 @@ executable('libinput-device-group',
 	   include_directories : [includes_src, includes_include],
 	   install : true,
 	   install_dir : dir_udev_callouts)
-executable('libinput-model-quirks',
-	   'udev/libinput-model-quirks.c',
+executable('libinput-fuzz-override',
+	   'udev/libinput-fuzz-override.c',
 	   dependencies : [dep_udev, dep_libevdev],
 	   include_directories : [includes_src, includes_include],
 	   install : true,
@@ -159,25 +159,34 @@ udev_rules_config = configuration_data()
 udev_rules_config.set('UDEV_TEST_PATH', '')
 configure_file(input : 'udev/80-libinput-device-groups.rules.in',
 	       output : '80-libinput-device-groups.rules',
-	       install : true,
 	       install_dir : dir_udev_rules,
 	       configuration : udev_rules_config)
-configure_file(input : 'udev/90-libinput-model-quirks.rules.in',
-              output : '90-libinput-model-quirks.rules',
-              install : true,
-              install_dir : dir_udev_rules,
-              configuration : udev_rules_config)
+configure_file(input : 'udev/90-libinput-fuzz-override.rules.in',
+	       output : '90-libinput-fuzz-override.rules',
+	       install_dir : dir_udev_rules,
+	       configuration : udev_rules_config)
 
 litest_udev_rules_config = configuration_data()
 litest_udev_rules_config.set('UDEV_TEST_PATH', meson.build_root() + '/')
 litest_groups_rules_file = configure_file(input : 'udev/80-libinput-device-groups.rules.in',
 	       output : '80-libinput-device-groups-litest.rules',
-	       install : false,
 	       configuration : litest_udev_rules_config)
-litest_model_quirks_file = configure_file(input : 'udev/90-libinput-model-quirks.rules.in',
-					  output : '90-libinput-model-quirks-litest.rules',
-					  install : false,
-					  configuration : litest_udev_rules_config)
+litest_fuzz_override_file = configure_file(input : 'udev/90-libinput-fuzz-override.rules.in',
+					   output : '90-libinput-fuzz-override-litest.rules',
+					   configuration : litest_udev_rules_config)
+
+############ Check for leftover udev rules ########
+
+# This test should be defined first so we don't waste time testing anything
+# else if we're about to fail anyway. ninja test will execute tests in the
+# order of them defined in meson.build
+
+if get_option('tests')
+	test('leftover-rules',
+	     find_program('test/check-leftover-udev-rules.sh'),
+	     is_parallel : false,
+	     suite : ['all'])
+endif
 
 ############ libepoll-shim (BSD) ############
 
@@ -214,7 +223,7 @@ src_libinput_util = [
 ]
 libinput_util = static_library('libinput-util',
 			       src_libinput_util,
-			       dependencies : [dep_udev, dep_libevdev],
+			       dependencies : [dep_udev, dep_libevdev, dep_libwacom],
 			       include_directories : includes_include)
 dep_libinput_util = declare_dependency(link_with : libinput_util)
 
@@ -232,7 +241,7 @@ src_libfilter = [
 		'src/filter-private.h'
 ]
 libfilter = static_library('filter', src_libfilter,
-			   dependencies : dep_udev,
+			   dependencies : [dep_udev, dep_libwacom],
 			   include_directories : includes_include)
 dep_libfilter = declare_dependency(link_with : libfilter)
 
@@ -249,17 +258,16 @@ quirks_data = [
 	'quirks/30-vendor-aiptek.quirks',
 	'quirks/30-vendor-alps.quirks',
 	'quirks/30-vendor-contour.quirks',
-	'quirks/30-vendor-cyapa.quirks',
+	'quirks/30-vendor-cypress.quirks',
 	'quirks/30-vendor-elantech.quirks',
-	'quirks/30-vendor-huion.quirks',
 	'quirks/30-vendor-ibm.quirks',
 	'quirks/30-vendor-kensington.quirks',
 	'quirks/30-vendor-logitech.quirks',
 	'quirks/30-vendor-microsoft.quirks',
 	'quirks/30-vendor-razer.quirks',
 	'quirks/30-vendor-synaptics.quirks',
-	'quirks/30-vendor-wacom.quirks',
 	'quirks/30-vendor-vmware.quirks',
+	'quirks/30-vendor-wacom.quirks',
 	'quirks/50-system-acer.quirks',
 	'quirks/50-system-apple.quirks',
 	'quirks/50-system-asus.quirks',
@@ -270,7 +278,14 @@ quirks_data = [
 	'quirks/50-system-hp.quirks',
 	'quirks/50-system-lenovo.quirks',
 	'quirks/50-system-system76.quirks',
+	'quirks/50-system-toshiba.quirks',
 ]
+
+test('quirks-in-meson.build',
+     find_program('quirks/test-quirks-in-meson.build.sh'),
+     args : [meson.source_root()],
+     suite : ['all']
+     )
 
 config_h.set_quoted('LIBINPUT_QUIRKS_FILES', ':'.join(quirks_data))
 config_h.set_quoted('LIBINPUT_QUIRKS_SRCDIR', dir_src_quirks)
@@ -283,7 +298,7 @@ src_libquirks = [
 	'src/builddir.h',
 ]
 
-deps_libquirks = [dep_udev, dep_libinput_util]
+deps_libquirks = [dep_udev, dep_libwacom, dep_libinput_util]
 libquirks = static_library('quirks', src_libquirks,
 			   dependencies : deps_libquirks,
 			   include_directories : includes_include)
@@ -300,10 +315,12 @@ src_libinput = src_libfilter + [
 	'src/evdev-debounce.c',
 	'src/evdev-fallback.c',
 	'src/evdev-fallback.h',
+	'src/evdev-totem.c',
 	'src/evdev-middle-button.c',
 	'src/evdev-mt-touchpad.c',
 	'src/evdev-mt-touchpad.h',
 	'src/evdev-mt-touchpad-tap.c',
+	'src/evdev-mt-touchpad-thumb.c',
 	'src/evdev-mt-touchpad-buttons.c',
 	'src/evdev-mt-touchpad-edge-scroll.c',
 	'src/evdev-mt-touchpad-gestures.c',
@@ -312,7 +329,6 @@ src_libinput = src_libfilter + [
 	'src/evdev-tablet-pad.c',
 	'src/evdev-tablet-pad.h',
 	'src/evdev-tablet-pad-leds.c',
-	'src/path-seat.h',
 	'src/path-seat.c',
 	'src/udev-seat.c',
 	'src/udev-seat.h',
@@ -343,7 +359,6 @@ libinput_version_h = configure_file(
 		input : 'src/libinput-version.h.in',
 		output : 'libinput-version.h',
 		configuration : libinput_version_h_config,
-		install : false,
 )
 
 mapfile = join_paths(dir_src, 'libinput.sym')
@@ -419,7 +434,6 @@ executable('libinput-debug-events',
 configure_file(input : 'tools/libinput-debug-events.man',
 	       output : 'libinput-debug-events.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -433,26 +447,24 @@ libinput_quirks = executable('libinput-quirks',
 			    )
 test('validate-quirks',
      libinput_quirks,
-     args: ['validate', '--data-dir=@0@'.format(dir_src_quirks)]
+     args: ['validate', '--data-dir=@0@'.format(dir_src_quirks)],
+     suite : ['all']
      )
 
 configure_file(input : 'tools/libinput-quirks.man',
 	       output : 'libinput-quirks.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 # Same man page for the subtools to stay consistent with the other tools
 configure_file(input : 'tools/libinput-quirks.man',
 	       output : 'libinput-quirks-list.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 configure_file(input : 'tools/libinput-quirks.man',
 	       output : 'libinput-quirks-validate.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -464,12 +476,13 @@ libinput_list_devices = executable('libinput-list-devices',
 				   install_dir : libinput_tool_path,
 				   install : true,
 				  )
-test('list-devices', libinput_list_devices)
+test('list-devices',
+     libinput_list_devices,
+     suite : ['all', 'root', 'hardware'])
 
 configure_file(input : 'tools/libinput-list-devices.man',
 	       output : 'libinput-list-devices.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -484,7 +497,6 @@ executable('libinput-measure',
 configure_file(input : 'tools/libinput-measure.man',
 	       output : 'libinput-measure.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -506,7 +518,6 @@ foreach t : src_python_tools
 	configure_file(input: t,
 		       output: '@BASENAME@',
 		       configuration : config_noop,
-		       install : true,
 		       install_dir : libinput_tool_path
 		      )
 endforeach
@@ -522,7 +533,6 @@ foreach m : src_man
 	configure_file(input : m,
 		       output : '@BASENAME@.1',
 		       configuration : man_config,
-		       install : true,
 		       install_dir : dir_man1)
 endforeach
 
@@ -537,7 +547,6 @@ executable('libinput-record',
 configure_file(input : 'tools/libinput-record.man',
 	       output : 'libinput-record.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -546,7 +555,6 @@ install_data('tools/libinput-replay',
 configure_file(input : 'tools/libinput-replay.man',
 	       output : 'libinput-replay.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -571,7 +579,6 @@ if get_option('debug-gui')
 	configure_file(input : 'tools/libinput-debug-gui.man',
 		       output : 'libinput-debug-gui.1',
 		       configuration : man_config,
-		       install : true,
 		       install_dir : dir_man1,
 		       )
 endif
@@ -587,7 +594,6 @@ libinput_tool = executable('libinput',
 configure_file(input : 'tools/libinput.man',
 	       output : 'libinput.1',
 	       configuration : man_config,
-	       install : true,
 	       install_dir : dir_man1,
 	       )
 
@@ -602,10 +608,16 @@ executable('ptraccel-debug',
 # Don't run the test during a release build because we rely on the magic
 # subtool lookup
 if get_option('buildtype') == 'debug' or get_option('buildtype') == 'debugoptimized'
+	config_tool_option_test = configuration_data()
+	config_tool_option_test.set('MESON_ENABLED_DEBUG_GUI', get_option('debug-gui'))
+	tool_option_test = configure_file(input: 'tools/test-tool-option-parsing.py',
+					  output: '@BASENAME@',
+					  configuration : config_tool_option_test)
 	test('tool-option-parsing',
-	     find_program('tools/test-tool-option-parsing.py'),
+	     tool_option_test,
 	     args : ['--tool-path', libinput_tool.full_path()],
-	     timeout : 120)
+	     suite : ['all', 'root'],
+	     timeout : 240)
 endif
 
 # the libinput tools check whether we execute from the builddir, this is
@@ -618,18 +630,21 @@ test_builddir_lookup = executable('test-builddir-lookup',
 				  install : false)
 test('tools-builddir-lookup',
      test_builddir_lookup,
-     args : ['--builddir-is-set'])
+     args : ['--builddir-is-set'],
+     suite : ['all'])
 test('tools-builddir-lookup-installed',
      find_program('test/helper-copy-and-exec-from-tmp.sh'),
      args : [test_builddir_lookup.full_path(), '--builddir-is-null'],
      env : ['LD_LIBRARY_PATH=@0@'.format(meson.build_root())],
+     suite : ['all'],
      workdir : '/tmp')
 
 ############ tests ############
 
 test('symbols-leak-test',
      find_program('test/symbols-leak-test'),
-     args : [ join_paths(dir_src, 'libinput.sym'), dir_src])
+     args : [ join_paths(dir_src, 'libinput.sym'), dir_src],
+     suite : ['all'])
 
 # build-test only
 executable('test-build-pedantic',
@@ -665,9 +680,6 @@ endif
 if get_option('tests')
 	dep_check = dependency('check', version : '>= 0.9.10')
 
-	leftover_rules = find_program('test/check-leftover-udev-rules.sh')
-	test('leftover-rules', leftover_rules, is_parallel : false)
-
 	gstack = find_program('gstack', required : false)
 	config_h.set10('HAVE_GSTACK', gstack.found())
 
@@ -692,6 +704,8 @@ if get_option('tests')
 		'test/litest-device-bcm5974.c',
 		'test/litest-device-calibrated-touchscreen.c',
 		'test/litest-device-cyborg-rat-5.c',
+		'test/litest-device-dell-canvas-totem.c',
+		'test/litest-device-dell-canvas-totem-touch.c',
 		'test/litest-device-elantech-touchpad.c',
 		'test/litest-device-generic-singletouch.c',
 		'test/litest-device-gpio-keys.c',
@@ -751,6 +765,7 @@ if get_option('tests')
 		'test/litest-device-wacom-intuos5-finger.c',
 		'test/litest-device-wacom-intuos5-pad.c',
 		'test/litest-device-wacom-intuos5-pen.c',
+		'test/litest-device-wacom-isdv4-4200-pen.c',
 		'test/litest-device-wacom-isdv4-e6-pen.c',
 		'test/litest-device-wacom-isdv4-e6-finger.c',
 		'test/litest-device-wacom-mobilestudio-pro-pad.c',
@@ -759,7 +774,8 @@ if get_option('tests')
 		'test/litest-device-xen-virtual-pointer.c',
 		'test/litest-device-vmware-virtual-usb-mouse.c',
 		'test/litest-device-yubikey.c',
-		'test/litest.c'
+		'test/litest.c',
+		'include/valgrind/valgrind.h'
 	]
 
 	dep_dl = cc.find_library('dl')
@@ -776,9 +792,11 @@ if get_option('tests')
 
 	litest_config_h = configuration_data()
 	litest_config_h.set_quoted('LIBINPUT_DEVICE_GROUPS_RULES_FILE',
-			    join_paths(meson.build_root(), '80-libinput-device-groups.rules'))
-	litest_config_h.set_quoted('LIBINPUT_MODEL_QUIRKS_UDEV_RULES_FILE',
-			    join_paths(meson.build_root(), '90-libinput-model-quirks.rules'))
+			    join_paths(meson.build_root(),
+				       '80-libinput-device-groups-litest.rules'))
+	litest_config_h.set_quoted('LIBINPUT_FUZZ_OVERRIDE_UDEV_RULES_FILE',
+			    join_paths(meson.build_root(),
+				       '90-libinput-fuzz-override-litest.rules'))
 
 	def_no_main = '-DLITEST_NO_MAIN'
 	def_disable_backtrace = '-DLITEST_DISABLE_BACKTRACE_LOGGING'
@@ -797,14 +815,19 @@ if get_option('tests')
 					  dependencies : deps_litest,
 					  c_args : defs_litest_selftest,
 					  install : false)
-	test('test-litest-selftest', test_litest_selftest)
+	test('test-litest-selftest',
+	     test_litest_selftest,
+	     suite : ['all'],
+	     timeout : 100)
 
 	def_LT_VERSION = '-DLIBINPUT_LT_VERSION="@0@:@1@:@2@"'.format(libinput_lt_c, libinput_lt_r, libinput_lt_a)
 	test_library_version = executable('test-library-version',
 					  ['test/test-library-version.c'],
 					  c_args : [ def_LT_VERSION ],
 					  install : false)
-	test('test-library-version', test_library_version)
+	test('test-library-version',
+	     test_library_version,
+	     suite : ['all'])
 
 	test_utils_sources = [
 		'src/libinput-util.h',
@@ -816,7 +839,9 @@ if get_option('tests')
 				include_directories : [includes_src, includes_include],
 				dependencies : deps_litest,
 				install: false)
-	test('test-utils', test_utils)
+	test('test-utils',
+	     test_utils,
+	     suite : ['all'])
 
 	libinput_test_runner_sources = litest_sources + [
 		'src/libinput-util.h',
@@ -827,6 +852,7 @@ if get_option('tests')
 		'test/test-touch.c',
 		'test/test-log.c',
 		'test/test-tablet.c',
+		'test/test-totem.c',
 		'test/test-pad.c',
 		'test/test-touchpad.c',
 		'test/test-touchpad-tap.c',
@@ -849,23 +875,35 @@ if get_option('tests')
 	configure_file(input : 'test/libinput-test-suite.man',
 		       output : 'libinput-test-suite.1',
 		       configuration : man_config,
-		       install : true,
 		       install_dir : dir_man1,
 		       )
 
-	test('libinput-test-suite-runner',
-	     libinput_test_runner,
-	     timeout : 1200)
+	# Update this list and the one in litest.c when new group names are
+	# required
+        groups = [
+		'config', 'context', 'device', 'events', 'gestures', 'keyboard', 'lid',
+		'log', 'misc', 'pad', 'path', 'pointer', 'quirks', 'switch', 'tablet',
+		'tablet-mode', 'tap', 'timer', 'totem', 'touch', 'touchpad', 'trackball',
+		'trackpoint', 'udev',
+	]
+	foreach group : groups
+		test('libinput-test-suite-@0@'.format(group),
+		     libinput_test_runner,
+		     suite : ['all', 'valgrind', 'root', 'hardware'],
+		     args : ['--filter-group=@0@:*'.format(group)],
+		     is_parallel : false,
+		     timeout : 1200)
+        endforeach
 
 	test('libinput-test-deviceless',
 	     libinput_test_runner,
+	     suite : ['all', 'valgrind'],
 	     args: ['--filter-deviceless'])
 
 	valgrind = find_program('valgrind', required : false)
 	if valgrind.found()
 		valgrind_env = environment()
-		valgrind_env.set('CK_FORK', 'no')
-		valgrind_env.set('USING_VALGRIND', '1')
+		valgrind_env.set('LITEST_JOBS', '4')
 		valgrind_suppressions_file = join_paths(dir_src_test, 'valgrind.suppressions')
 		add_test_setup('valgrind',
 				exe_wrapper : [ valgrind,
@@ -879,8 +917,7 @@ if get_option('tests')
 		message('valgrind not found, disabling valgrind test suite')
 	endif
 	configure_file(output : 'litest-config.h',
-		       install : false,
 		       configuration : litest_config_h)
 endif
 ############ output files ############
-configure_file(output : 'config.h', install : false, configuration : config_h)
+configure_file(output : 'config.h', configuration : config_h)

@@ -31,6 +31,10 @@
 #include <math.h>
 #include <stdarg.h>
 
+#if HAVE_LIBWACOM
+#include <libwacom/libwacom.h>
+#endif
+
 #include "linux/input.h"
 
 #include "libinput.h"
@@ -107,6 +111,12 @@ struct device_coord_rect {
 	int w, h;
 };
 
+/* A pair of major/minor in mm */
+struct phys_ellipsis {
+	double major;
+	double minor;
+};
+
 /* A pair of tilt flags */
 struct wheel_tilt_flags {
 	bool vertical, horizontal;
@@ -155,6 +165,13 @@ struct libinput {
 
 	bool quirks_initialized;
 	struct quirks_context *quirks;
+
+#if HAVE_LIBWACOM
+	struct {
+		WacomDeviceDatabase *db;
+		size_t refcount;
+	} libwacom;
+#endif
 };
 
 typedef void (*libinput_seat_destroy_func) (struct libinput_seat *seat);
@@ -338,9 +355,11 @@ enum libinput_tablet_tool_axis {
 	LIBINPUT_TABLET_TOOL_AXIS_ROTATION_Z = 7,
 	LIBINPUT_TABLET_TOOL_AXIS_SLIDER = 8,
 	LIBINPUT_TABLET_TOOL_AXIS_REL_WHEEL = 9,
+	LIBINPUT_TABLET_TOOL_AXIS_SIZE_MAJOR = 10,
+	LIBINPUT_TABLET_TOOL_AXIS_SIZE_MINOR = 11,
 };
 
-#define LIBINPUT_TABLET_TOOL_AXIS_MAX LIBINPUT_TABLET_TOOL_AXIS_REL_WHEEL
+#define LIBINPUT_TABLET_TOOL_AXIS_MAX LIBINPUT_TABLET_TOOL_AXIS_SIZE_MINOR
 
 struct tablet_axes {
 	struct device_coords point;
@@ -352,6 +371,7 @@ struct tablet_axes {
 	double slider;
 	double wheel;
 	int wheel_discrete;
+	struct phys_ellipsis size;
 };
 
 struct libinput_tablet_tool {
@@ -366,7 +386,8 @@ struct libinput_tablet_tool {
 
 	/* The pressure threshold assumes a pressure_offset of 0 */
 	struct threshold pressure_threshold;
-	int pressure_offset; /* in device coordinates */
+	/* pressure_offset includes axis->minimum */
+	int pressure_offset;
 	bool has_pressure_offset;
 };
 
@@ -836,5 +857,16 @@ point_in_rect(const struct device_coords *point,
 		point->y >= rect->y &&
 		point->y < rect->y + rect->h);
 }
+
+#if HAVE_LIBWACOM
+WacomDeviceDatabase *
+libinput_libwacom_ref(struct libinput *li);
+void
+libinput_libwacom_unref(struct libinput *li);
+#else
+static inline void *libinput_libwacom_ref(struct libinput *li) { return NULL; }
+static inline void libinput_libwacom_unref(struct libinput *li) {}
+#endif
+
 
 #endif /* LIBINPUT_PRIVATE_H */

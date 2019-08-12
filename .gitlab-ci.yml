@@ -24,12 +24,25 @@
 # <distribution>:<version>@activity:
 #  e.g. fedora:29@build-default
 
+include:
+  # Arch container builder template
+  - project: 'wayland/ci-templates'
+    ref: 955e61e67cf29327cf907432f668df9eec4ca6a2 # see https://docs.gitlab.com/ee/ci/yaml/#includefile
+    file: '/templates/arch.yml'
+  # Fedora container builder template
+  - project: 'wayland/ci-templates'
+    ref: 955e61e67cf29327cf907432f668df9eec4ca6a2 # see https://docs.gitlab.com/ee/ci/yaml/#includefile
+    file: '/templates/fedora.yml'
+  # Ubuntu container builder template
+  - project: 'wayland/ci-templates'
+    ref: 955e61e67cf29327cf907432f668df9eec4ca6a2 # see https://docs.gitlab.com/ee/ci/yaml/#includefile
+    file: '/templates/ubuntu.yml'
+
 stages:
-  - bootstrapping    # creates the initial container image (optional)
-  - container_check  # check if the current container images are up to date
-  - container_prep   # rebuild the container images if previous step failed
+  - container_prep   # rebuild the container images if there is a change
   - build            # for actually building things
   - deploy           # trigger wayland's website generation
+  - container_clean  # clean up unused container images
 
 variables:
   ###############################################################################
@@ -42,24 +55,36 @@ variables:
   # See the documentation here:                                                 #
   # https://wayland.freedesktop.org/libinput/doc/latest/building_libinput.html  #
   ###############################################################################
-  FEDORA_RPMS: 'git gcc gcc-c++ pkgconf-pkg-config meson check-devel libudev-devel libevdev-devel doxygen graphviz python3-sphinx python3-recommonmark                          libwacom-devel cairo-devel   gtk3-devel   glib2-devel    mtdev-devel'
-  UBUNTU_DEBS: 'git gcc g++     pkg-config         meson check       libudev-dev   libevdev-dev   doxygen graphviz python3-sphinx python3-recommonmark python3-sphinx-rtd-theme libwacom-dev   libcairo2-dev libgtk-3-dev libglib2.0-dev libmtdev-dev'
-  ARCH_PKGS:   'git gcc         pkgconfig          meson check       libsystemd    libevdev       doxygen graphviz  python-sphinx  python-recommonmark                          libwacom                     gtk3                        mtdev      diffutils'
+  FEDORA_RPMS:        'git gcc gcc-c++ pkgconf-pkg-config meson check-devel libudev-devel libevdev-devel doxygen graphviz python3-sphinx python3-recommonmark                          libwacom-devel cairo-devel   gtk3-devel   glib2-devel    mtdev-devel'
+  UBUNTU_CUSTOM_DEBS: 'git gcc g++     pkg-config         meson check       libudev-dev   libevdev-dev   doxygen graphviz python3-sphinx python3-recommonmark python3-sphinx-rtd-theme libwacom-dev   libcairo2-dev libgtk-3-dev libglib2.0-dev libmtdev-dev'
+  ARCH_PKGS:          'git gcc         pkgconfig          meson check       libsystemd    libevdev       doxygen graphviz  python-sphinx  python-recommonmark python-sphinx_rtd_theme  libwacom                     gtk3                        mtdev      diffutils'
   FREEBSD_BUILD_PKGS: 'meson'
-  FREEBSD_PKGS: 'libepoll-shim                                       libudev-devd  libevdev                                          libwacom                     gtk3                        libmtdev   '
+  FREEBSD_PKGS:       'libepoll-shim                                        libudev-devd  libevdev                                                                                     libwacom                     gtk3                        libmtdev   '
   ############################ end of package lists #############################
+
+  # these tags should be updated each time the list of packages is updated
+  # changing these will force rebuilding the associated image
+  # Note: these tags have no meaning and are not tied to a particular
+  # libinput version
+  FEDORA_TAG: '2019-08-07.0'
+  UBUNTU_TAG: '2019-08-07.0'
+  ARCH_TAG: '2019-08-07.0'
+  FREEBSD_TAG: '2019-08-07.0'
+
+  UBUNTU_EXEC: "bash .gitlab-ci/ubuntu_install.sh $UBUNTU_CUSTOM_DEBS"
+
+  UPSTREAM_REPO: libinput/libinput
+  BUILDAH_IMAGE: $CI_REGISTRY/wayland/ci-templates/buildah:latest
+  FEDORA_CONTAINER_IMAGE: $CI_REGISTRY_IMAGE/fedora/$FEDORA_VERSION:$FEDORA_TAG
+  UBUNTU_CONTAINER_IMAGE: $CI_REGISTRY_IMAGE/ubuntu/$UBUNTU_VERSION:$UBUNTU_TAG
+  ARCH_CONTAINER_IMAGE: $CI_REGISTRY_IMAGE/archlinux/rolling:$ARCH_TAG
+  FREEBSD_CONTAINER_IMAGE: $CI_REGISTRY_IMAGE/freebsd/11.2:$FREEBSD_TAG
+
   MESON_BUILDDIR: "build dir"
-  NINJA_ARGS: 'test'
+  NINJA_ARGS: ''
   MESON_ARGS: ''
-  # We do not use CI_PROJECT_NAMESPACE or CI_REGISTRY_IMAGE because we want
-  # forks to use these particular images
-  PROJECT_NAMESPACE: libinput
-  FEDORA_CONTAINER_IMAGE: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/fedora/$FEDORA_VERSION
-  UBUNTU_CONTAINER_IMAGE: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/ubuntu/$UBUNTU_VERSION
-  ARCH_CONTAINER_IMAGE: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/arch/rolling
-  FREEBSD_CONTAINER_IMAGE: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/freebsd/11.2
-  # Until we have a VM with full access, we cannot run the test suite runner
-  SKIP_LIBINPUT_TEST_SUITE_RUNNER: 1
+  MESON_TEST_ARGS: '--no-suite=hardware'
+
   # udev isn't available/working properly in the containers
   UDEV_NOT_AVAILABLE: 1
   GIT_DEPTH: 1
@@ -79,330 +104,167 @@ variables:
    - meson "$MESON_BUILDDIR" $MESON_ARGS
    - meson configure "$MESON_BUILDDIR"
    - ninja -C "$MESON_BUILDDIR" $NINJA_ARGS
-
-# special rule to not expose the container creation runners to other users
-# than those who have set up the CI to push on the registry.
-# Users who have write access to libinput/libinput will have write
-# access to the registry, so the libinput/libinput is a catch-all for
-# our core developers.
-#
-# we can add as many users as we want by adding a new line like:
-#   - $GITLAB_USER_LOGIN == "someone"
-.restrict_container_creation: &restrict_container_creation
-  only:
-    variables:
-      # Note: this is a set of logical OR, not AND
-      - $CI_PROJECT_PATH == "libinput/libinput"
+   - if test x"$MESON_TEST_ARGS" != "x"; then echo "Running meson test -C \"$MESON_BUILDDIR\" $MESON_TEST_ARGS"; meson test -C "$MESON_BUILDDIR" $MESON_TEST_ARGS; fi
 
 #################################################################
 #                                                               #
-#                    bootstrapping stage                        #
-#                                                               #
-#################################################################
-
-# we need a minimalist image capable of buildah, podman, skopeo, curl,
-# jq, date and test. Instead of using a full fedora and install the
-# dependencies, we can build an alpine container through buildah with
-# the script at `ci/bootstrap.sh`
-bootstrap:
-  stage: bootstrapping
-  when: manual
-  image: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
-  script:
-    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - bash ci/bootstrap.sh $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
-    - podman images
-    - podman push --quiet $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
-    # add an extra tag to the docker registry:
-    - skopeo copy docker://$CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest docker://$CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:$CI_JOB_ID
-  <<: *restrict_container_creation
-
-#################################################################
-#                                                               #
-#                   container check stage                       #
-#                                                               #
-#################################################################
-
-.container-check:
-  stage: container_check
-  image: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
-  script:
-    # get the full container image name (CURRENT_CONTAINER_IMAGE still has indirections)
-    - CONTAINER_IMAGE=$(eval echo "$CURRENT_CONTAINER_IMAGE")
-
-    # get the date of the current image
-    - IMG_DATE=$(skopeo inspect docker://$CONTAINER_IMAGE | jq -r '.Created' | cut -dT -f1)
-
-    - TODAY_SECS=$(date -u +%s)
-    - IMG_SECS=$(date -u --date="$IMG_DATE" +%s)
-    - echo "today $TODAY_SECS, image $IMG_SECS"
-    - echo "image age $(($TODAY_SECS - $IMG_SECS))s"
-
-    # check if image is less than a week old
-    - test $(($IMG_SECS + 604800)) -gt $TODAY_SECS
-
-    # export an artefact telling the next stage that the image is valid
-    - touch .img_ready
-  artifacts:
-    name: image-$CURRENT_CONTAINER_IMAGE-check
-    expire_in: 6 hrs
-    paths:
-      - .img_ready
-  allow_failure: true
-  <<: *restrict_container_creation
-
-
-# TODO: check that the RPMS/DEBS are all in the current images
-
-fedora:28@container-check:
-  extends: .container-check
-  variables:
-    GIT_STRATEGY: none
-    FEDORA_VERSION: 28
-    CURRENT_CONTAINER_IMAGE: $FEDORA_CONTAINER_IMAGE:latest
-
-fedora:29@container-check:
-  extends: .container-check
-  variables:
-    GIT_STRATEGY: none
-    FEDORA_VERSION: 29
-    CURRENT_CONTAINER_IMAGE: $FEDORA_CONTAINER_IMAGE:latest
-
-ubuntu:18.10@container-check:
-  extends: .container-check
-  variables:
-    GIT_STRATEGY: none
-    UBUNTU_VERSION: "18.10"
-    CURRENT_CONTAINER_IMAGE: $UBUNTU_CONTAINER_IMAGE:latest
-
-ubuntu:18.04@container-check:
-  extends: .container-check
-  variables:
-    GIT_STRATEGY: none
-    UBUNTU_VERSION: "18.04"
-    CURRENT_CONTAINER_IMAGE: $UBUNTU_CONTAINER_IMAGE:latest
-
-arch:rolling@container-check:
-  extends: .container-check
-  variables:
-    GIT_STRATEGY: none
-    CURRENT_CONTAINER_IMAGE: $ARCH_CONTAINER_IMAGE:latest
-
-freebsd:11.2@container-check:
-  extends: .container-check
-  variables:
-    GIT_STRATEGY: none
-    CURRENT_CONTAINER_IMAGE: $FREEBSD_CONTAINER_IMAGE:latest
-
-#################################################################
-#                                                               #
-#                   container prep stage                        #
+#                    container prep stage                       #
 #                                                               #
 #################################################################
 
 #
-# This stage will recreate the container images only if the previous
-# stage had a build failure, i.e. the image is too old or if it is
-# missing some dependencies.
+# This stage will recreate the container images only if the image
+# is too old or if it is missing some dependencies.
 #
 
-.container-prep:
-  stage: container_prep
-  image: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
+.pull_upstream_or_rebuild: &pull_upstream_or_rebuild
   before_script:
-    # if the check was successful, we just skip recreating the container image
-    - test -e .img_ready && exit 0
-
     # log in to the registry
     - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-  <<: *restrict_container_creation
 
-.fedora@container-prep:
-  extends: .container-prep
-  script:
-    - buildcntr=$(buildah from --quiet fedora:$FEDORA_VERSION)
-    - buildah run $buildcntr dnf upgrade -y
-    - buildah run $buildcntr dnf install -y $FEDORA_RPMS
-    - buildah run $buildcntr dnf clean all
-    - buildah config --workingdir /app $buildcntr
-    # tag the current container
-    - buildah commit --quiet $buildcntr $FEDORA_CONTAINER_IMAGE:latest
-    # clean up the working container
-    - buildah rm $buildcntr
+    # get the full container image name (DISTRIB_VERSION still has indirections)
+    - IMAGE=$(eval echo "$DISTRIB_FLAVOR/$DISTRIB_VERSION:$TAG")
 
-    # push the container image to the libinput registry
-    - podman push --quiet $FEDORA_CONTAINER_IMAGE:latest
-    - skopeo copy docker://$FEDORA_CONTAINER_IMAGE:latest docker://$FEDORA_CONTAINER_IMAGE:$CI_JOB_ID
+    - |
+      # force rebuild if schedule, reuse otherwise
+      if [[ $CI_PIPELINE_SOURCE != "schedule" ]] ;
+      then
+        # pull the latest upstream image if it exists
+        skopeo copy docker://$CI_REGISTRY/$UPSTREAM_REPO/$IMAGE \
+                    docker://$CI_REGISTRY_IMAGE/$IMAGE && exit 0 || true ;
 
-fedora:28@container-prep:
-  extends: .fedora@container-prep
+        # check if our image is already in the current registry
+        skopeo inspect docker://$CI_REGISTRY_IMAGE/$IMAGE > /dev/null && exit 0 || true ;
+      fi
+
+fedora:30@container-prep:
+  extends: .fedora@container-build
+  stage: container_prep
   variables:
     GIT_STRATEGY: none
-    FEDORA_VERSION: 28
-  dependencies:
-    # Note: we can not use $FEDORA_VERSION here
-    - fedora:28@container-check
+    FEDORA_VERSION: 30
+    DISTRIB_FLAVOR: fedora
+    DISTRIB_VERSION: $FEDORA_VERSION
+    TAG: $FEDORA_TAG
+  <<: *pull_upstream_or_rebuild
 
 fedora:29@container-prep:
-  extends: .fedora@container-prep
+  extends: .fedora@container-build
+  stage: container_prep
   variables:
     GIT_STRATEGY: none
     FEDORA_VERSION: 29
-  dependencies:
-    # Note: we can not use $FEDORA_VERSION here
-    - fedora:29@container-check
+    DISTRIB_FLAVOR: fedora
+    DISTRIB_VERSION: $FEDORA_VERSION
+    TAG: $FEDORA_TAG
+  <<: *pull_upstream_or_rebuild
 
-.ubuntu@container-prep:
-  extends: .container-prep
-  script:
-    - buildcntr=$(buildah from --quiet ubuntu:$UBUNTU_VERSION)
-    - buildah run $buildcntr env DEBIAN_FRONTEND=noninteractive apt-get update
-    - buildah run $buildcntr env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
-    - buildah run $buildcntr env DEBIAN_FRONTEND=noninteractive add-apt-repository universe
-    - buildah run $buildcntr env DEBIAN_FRONTEND=noninteractive apt-get update
-    - buildah run $buildcntr env DEBIAN_FRONTEND=noninteractive apt-get install -y $UBUNTU_DEBS
-    - buildah run $buildcntr env DEBIAN_FRONTEND=noninteractive apt-get clean
-    - buildah config --workingdir /app $buildcntr
-    # tag the current container
-    - buildah commit --quiet $buildcntr $UBUNTU_CONTAINER_IMAGE:latest
-    # clean up the working container
-    - buildah rm $buildcntr
-
-    # push the container image to the libinput registry
-    - podman push --quiet $UBUNTU_CONTAINER_IMAGE:latest
-    - skopeo copy docker://$UBUNTU_CONTAINER_IMAGE:latest docker://$UBUNTU_CONTAINER_IMAGE:$CI_JOB_ID
 
 ubuntu:18.10@container-prep:
-  extends: .ubuntu@container-prep
+  extends: .ubuntu@container-build
+  stage: container_prep
   variables:
     GIT_STRATEGY: none
     UBUNTU_VERSION: "18.10"
-  dependencies:
-    # Note: we can not use $UBUNTU_VERSION here
-    - ubuntu:18.10@container-check
+    DISTRIB_FLAVOR: ubuntu
+    DISTRIB_VERSION: $UBUNTU_VERSION
+    TAG: $UBUNTU_TAG
+  <<: *pull_upstream_or_rebuild
 
-ubuntu:18.04@container-prep:
-  extends: .ubuntu@container-prep
+ubuntu:19.04@container-prep:
+  extends: .ubuntu@container-build
+  stage: container_prep
   variables:
     GIT_STRATEGY: none
-    UBUNTU_VERSION: "18.04"
-  dependencies:
-    # Note: we can not use $UBUNTU_VERSION here
-    - ubuntu:18.04@container-check
+    UBUNTU_VERSION: "19.04"
+    DISTRIB_FLAVOR: ubuntu
+    DISTRIB_VERSION: $UBUNTU_VERSION
+    TAG: $UBUNTU_TAG
+  <<: *pull_upstream_or_rebuild
 
-.arch@container-prep:
-  extends: .container-prep
-  script:
-    - buildcntr=$(buildah from --quiet archlinux/base)
-    - buildah run $buildcntr pacman -S --refresh
-    - buildah run $buildcntr pacman -S --sysupgrade --noconfirm
-    - buildah run $buildcntr pacman -S --noconfirm $ARCH_PKGS
-    # in case it doesn't exist yet, otherwise pacman clean fails
-    - buildah run $buildcntr mkdir -p /var/cache/pacman/pkg
-    - buildah run $buildcntr pacman -S --clean --noconfirm
-    - buildah config --workingdir /app $buildcntr
-    # tag the current container
-    - buildah commit --quiet $buildcntr $ARCH_CONTAINER_IMAGE:latest
-    # clean up the working container
-    - buildah rm $buildcntr
-
-    # push the container image to the libinput registry
-    - podman push --quiet $ARCH_CONTAINER_IMAGE:latest
-    - skopeo copy docker://$ARCH_CONTAINER_IMAGE:latest docker://$ARCH_CONTAINER_IMAGE:$CI_JOB_ID
 
 arch:rolling@container-prep:
-  extends: .arch@container-prep
+  extends: .arch@container-build
+  stage: container_prep
   variables:
     GIT_STRATEGY: none
-  dependencies:
-    - arch:rolling@container-check
+    ARCH_VERSION: rolling
+    DISTRIB_FLAVOR: archlinux
+    DISTRIB_VERSION: $ARCH_VERSION
+    TAG: $ARCH_TAG
+  <<: *pull_upstream_or_rebuild
 
 .freebsd@container-prep:
-  extends: .container-prep
+  stage: container_prep
+  image: $BUILDAH_IMAGE
+  <<: *pull_upstream_or_rebuild
   script:
+    - export BUILDAH_RUN="buildah run --isolation chroot"
+    - export BUILDAH_COMMIT="buildah commit --format docker"
     - buildcntr=$(buildah from --quiet  myfreeweb/freebsd-cross:latest)
-    - buildah run $buildcntr apk add --no-cache $FREEBSD_BUILD_PKGS
-    - buildah run $buildcntr pkg -r /freebsd update -f
-    - buildah run $buildcntr pkg -r /freebsd install -y $FREEBSD_PKGS
+    - $BUILDAH_RUN $buildcntr apk add --no-cache $FREEBSD_BUILD_PKGS
+    - $BUILDAH_RUN $buildcntr pkg -r /freebsd update -f
+    - $BUILDAH_RUN $buildcntr pkg -r /freebsd install -y $FREEBSD_PKGS
     - buildah config --workingdir /app $buildcntr
     # tag the current container
-    - buildah commit --quiet $buildcntr $FREEBSD_CONTAINER_IMAGE:latest
+    - $BUILDAH_COMMIT $buildcntr $FREEBSD_CONTAINER_IMAGE
     # clean up the working container
     - buildah rm $buildcntr
 
     # push the container image to the libinput registry
-    - podman push --quiet $FREEBSD_CONTAINER_IMAGE:latest
-    - skopeo copy docker://$FREEBSD_CONTAINER_IMAGE:latest docker://$FREEBSD_CONTAINER_IMAGE:$CI_JOB_ID
+    - podman push --quiet $FREEBSD_CONTAINER_IMAGE
+    - skopeo copy docker://$FREEBSD_CONTAINER_IMAGE docker://$CI_REGISTRY_IMAGE/freebsd/$FREEBSD_VERSION:$CI_JOB_ID
 
 freebsd:11.2@container-prep:
   extends: .freebsd@container-prep
   variables:
     GIT_STRATEGY: none
-  dependencies:
-    # Note: we can not use $FREEBSD_VERSION here
-    - freebsd:11.2@container-check
+    FREEBSD_VERSION: "11.2"
+    DISTRIB_FLAVOR: freebsd
+    DISTRIB_VERSION: $FREEBSD_VERSION
+    TAG: $FREEBSD_TAG
 
-# Add some manual runners to be able to recreate the cache on a day
-# the list of the rpms changed
-
-fedora:28@force-container-prep:
-  extends: fedora:28@container-prep
-  when: manual
-  dependencies: []
-
-fedora:29@force-container-prep:
-  extends: fedora:29@container-prep
-  when: manual
-  dependencies: []
-
-ubuntu:18.10@force-container-prep:
-  extends: ubuntu:18.10@container-prep
-  when: manual
-  dependencies: []
-
-ubuntu:18.04@force-container-prep:
-  extends: ubuntu:18.04@container-prep
-  when: manual
-  dependencies: []
-
-arch:rolling@force-container-prep:
-  extends: arch:rolling@container-prep
-  when: manual
-  dependencies: []
-
-freebsd:11.2@force-container-prep:
-  extends: freebsd:11.2@container-prep
-  when: manual
-  dependencies: []
 
 #################################################################
 #                                                               #
 #                   container clean stage                       #
-#                 run during the check stage                    #
+#                 run during the clean stage                    #
 #                                                               #
 #################################################################
 
 #
 # This stage will look for the container images we currently have in
-# the registry and will remove any that are not tagged as 'latest'
+# the registry and will remove any that are not tagged with the provided
+# $container_image:$tag
 #
 .container-clean:
-  stage: container_check
-  image: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
+  stage: container_clean
+  image: $BUILDAH_IMAGE
   script:
     # get the full container image name (CURRENT_CONTAINER_IMAGE still has indirections)
     - CONTAINER_IMAGE=$(eval echo "$CURRENT_CONTAINER_IMAGE")
     - GITLAB=$(echo $CI_PROJECT_URL | cut -f3 -d/)
-    - REPOSITORY=$(echo $CONTAINER_IMAGE | cut -f2- -d/)
+    - REPOSITORY=$(echo $CONTAINER_IMAGE | cut -f2- -d/ | cut -f1 -d:)
     - IMAGE_PATH=$(echo $CONTAINER_IMAGE | cut -f1 -d:)
+    - LATEST_TAG=$(echo $CONTAINER_IMAGE | cut -f2 -d:)
+
+    # log in to the registry (read only)
+    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
 
     # get the r/w token from the settings to access the registry
     #
     # each developer needs to register a secret variable that contains
-    # a personal token with api access in the form of:
-    # PERSONAL_TOKEN_$USER (for example PERSONAL_TOKEN_bentiss)
+    # a personal token with api access. The token
+    # - must be named PERSONAL_TOKEN_$USER (for example PERSONAL_TOKEN_bentiss)
+    # - must be registered in the CI/CD Variables section as type file
+    # - value must be a netrc file as a single-line string:
+    #   default login <user> password <token value>
+    #   e.g. "default login bentiss password 1235abcde"
     - tokenname="PERSONAL_TOKEN_$GITLAB_USER_LOGIN"
-    - token=$(eval echo "\$$tokenname")
+    - netrcfile=$(eval echo "\$$tokenname")
+    - if [[ ! -f "$netrcfile" ]]; then
+         echo "No netrc file found or token is missing, skipping job" && false;
+      fi
 
     # request a token for the registry API
     - REGISTRY_TOKEN=$(curl https://$GITLAB/jwt/auth --get
@@ -412,14 +274,18 @@ freebsd:11.2@force-container-prep:
                              -d service=container_registry
                              -d "scope=repository:$REPOSITORY:pull,*"
                              --fail
-                             --user $GITLAB_USER_LOGIN:$token
+                             --netrc-file "$netrcfile"
                              | sed -r 's/(\{"token":"|"\})//g')
 
     # get the digest of the latest image
-    - LATEST_MANIFEST=$(skopeo inspect docker://$IMAGE_PATH:latest | jq -r '.Digest')
+    - LATEST_MANIFEST=$(skopeo inspect docker://$IMAGE_PATH:$LATEST_TAG | jq -r '.Digest')
 
     # get the list of tags
-    - TAGS=$(skopeo inspect docker://$IMAGE_PATH | jq -r '.RepoTags[]')
+    - TAGS=$(skopeo inspect docker://$IMAGE_PATH:$LATEST_TAG | jq -r '.RepoTags[]')
+    # FIXME: is the above command working properly? If not, use below:
+    # - TAGS=$(curl -X GET -H "accept:application/vnd.docker.distribution.manifest.v2+json"
+    #                      -H "authorization:Bearer $REGISTRY_TOKEN"
+    #                      https://$CI_REGISTRY/v2/$REPOSITORY/tags/list | jq -r '.tags[]')
 
     # iterate over the tags
     - for tag in $TAGS;
@@ -431,24 +297,19 @@ freebsd:11.2@force-container-prep:
             curl https://$CI_REGISTRY/v2/$REPOSITORY/manifests/$MANIFEST --silent
                  -H "accept:application/vnd.docker.distribution.manifest.v2+json"
                  -H "authorization:Bearer $REGISTRY_TOKEN"
-                 --fail --show-error -X DELETE
+                 --fail --show-error -X DELETE || true
           ;fi
       ;done
   dependencies: []
   allow_failure: true
-  <<: *restrict_container_creation
+  only:
+    - schedules
 
-bootstrap@container-clean:
+fedora:30@container-clean:
   extends: .container-clean
   variables:
     GIT_STRATEGY: none
-    CURRENT_CONTAINER_IMAGE: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers
-
-fedora:28@container-clean:
-  extends: .container-clean
-  variables:
-    GIT_STRATEGY: none
-    FEDORA_VERSION: 28
+    FEDORA_VERSION: 30
     CURRENT_CONTAINER_IMAGE: $FEDORA_CONTAINER_IMAGE
 
 fedora:29@container-clean:
@@ -465,11 +326,11 @@ ubuntu:18.10@container-clean:
     UBUNTU_VERSION: "18.10"
     CURRENT_CONTAINER_IMAGE: $UBUNTU_CONTAINER_IMAGE
 
-ubuntu:18.04@container-clean:
+ubuntu:19.04@container-clean:
   extends: .container-clean
   variables:
     GIT_STRATEGY: none
-    UBUNTU_VERSION: "18.04"
+    UBUNTU_VERSION: "19.04"
     CURRENT_CONTAINER_IMAGE: $UBUNTU_CONTAINER_IMAGE
 
 arch:rolling@container-clean:
@@ -502,29 +363,29 @@ freebsd:11.2@container-clean:
 
 .fedora-build@template:
   extends: .build@template
-  image: $FEDORA_CONTAINER_IMAGE:latest
-
-fedora:28@default-build:
-  extends: .fedora-build@template
-  variables:
-    FEDORA_VERSION: 28
+  image: $FEDORA_CONTAINER_IMAGE
 
 fedora:29@default-build:
   extends: .fedora-build@template
   variables:
     FEDORA_VERSION: 29
 
-fedora:29@default-build-release:
+fedora:30@default-build:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
+
+fedora:30@default-build-release:
+  extends: .fedora-build@template
+  variables:
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Dbuildtype=release"
     CFLAGS: "-Werror"
 
-fedora:29@scan-build:
+fedora:30@scan-build:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     NINJA_ARGS: scan-build
   before_script:
     - dnf install -y clang-analyzer findutils
@@ -538,99 +399,93 @@ fedora:29@scan-build:
 # run them on one image, they shouldn't fail on one distro
 # when they succeed on another.
 
-fedora:29@build-no-libwacom:
+fedora:30@build-no-libwacom:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Dlibwacom=false"
 
-fedora:29@build-no-libwacom-nodeps:
+fedora:30@build-no-libwacom-nodeps:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Dlibwacom=false"
   before_script:
     - dnf remove -y libwacom libwacom-devel
 
-fedora:29@build-no-docs:
+fedora:30@build-no-docs:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Ddocumentation=false"
 
-fedora:29@build-no-docs-nodeps:
+fedora:30@build-no-docs-nodeps:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Ddocumentation=false"
   before_script:
     - dnf remove -y doxygen graphviz
 
-fedora:29@build-no-debuggui:
+fedora:30@build-no-debuggui:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Ddebug-gui=false"
 
-fedora:29@build-no-debuggui-nodeps:
+fedora:30@build-no-debuggui-nodeps:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Ddebug-gui=false"
   before_script:
     - dnf remove -y gtk3-devel
 
-fedora:29@build-no-tests:
+fedora:30@build-no-tests:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Dtests=false"
 
-fedora:29@build-no-tests-nodeps:
+fedora:30@build-no-tests-nodeps:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
     MESON_ARGS: "-Dtests=false"
   before_script:
     - dnf remove -y check-devel
 
-fedora:29@valgrind:
+fedora:30@valgrind:
   extends: .fedora-build@template
   variables:
-    FEDORA_VERSION: 29
+    FEDORA_VERSION: 30
+    MESON_TEST_ARGS: '--suite=valgrind --no-suite=hardware --setup=valgrind'
   before_script:
     - dnf install -y valgrind
-  # note: we override the default_build here by providing a new script
-  script:
-   - rm -rf "$MESON_BUILDDIR"
-   - meson "$MESON_BUILDDIR" $MESON_ARGS
-   - meson configure "$MESON_BUILDDIR"
-   - meson test -C "$MESON_BUILDDIR" --setup=valgrind
-
 #
 # Ubuntu
 #
 
 .ubuntu@template:
   extends: .build@template
-  image: $UBUNTU_CONTAINER_IMAGE:latest
+  image: $UBUNTU_CONTAINER_IMAGE
 
 ubuntu:18.10@default-build:
   extends: .ubuntu@template
   variables:
     UBUNTU_VERSION: "18.10"
 
-ubuntu:18.04@default-build:
+ubuntu:19.04@default-build:
   extends: .ubuntu@template
   variables:
-    UBUNTU_VERSION: "18.04"
+    UBUNTU_VERSION: "19.04"
 
 #
 # Arch
 #
 .arch@template:
   extends: .build@template
-  image: $ARCH_CONTAINER_IMAGE:latest
+  image: $ARCH_CONTAINER_IMAGE
 
 arch:rolling@default-build:
   extends: .arch@template
@@ -640,11 +495,11 @@ arch:rolling@default-build:
 #
 .freebsd@template:
   extends: .build@template
-  image: $FREEBSD_CONTAINER_IMAGE:latest
+  image: $FREEBSD_CONTAINER_IMAGE
   variables:
     MESON_ARGS: '--cross-file freebsd -Ddocumentation=false -Dtests=false -Depoll-dir=/freebsd/usr/local/'
-    # Can't run FreeBSD tests on Linux machine, so NINJA_ARGS shouldn't be "test"
-    NINJA_ARGS: ''
+    # Can't run FreeBSD tests on Linux machine, so MESON_TEST_ARGS shouldn't be "test"
+    MESON_TEST_ARGS: ''
 
 freebsd:11.2@default-build:
   extends: .freebsd@template
@@ -654,11 +509,15 @@ freebsd:11.2@default-build:
 #
 
 wayland-web:
-  image: $CI_REGISTRY/$PROJECT_NAMESPACE/$CI_PROJECT_NAME/containers:latest
+  image: $BUILDAH_IMAGE
   stage: deploy
   script:
+    # Requirements:
+    # - variable WAYLAND_WEB_TOKEN defined as type File in libinput's CI/CD settings
+    # - content of that file is the token value, as generated by the Pipeline Triggers
+    #   of the wayland.freedesktop.org project.
     - curl --request POST
-           --form "token=$WAYLAND_WEB_TOKEN"
+           --form "token=<$WAYLAND_WEB_TOKEN"
            --form ref=master
            https://gitlab.freedesktop.org/api/v4/projects/wayland${SLASH}wayland${DOT}freedesktop${DOT}org/trigger/pipeline
   only:

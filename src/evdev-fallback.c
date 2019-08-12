@@ -311,7 +311,7 @@ fallback_flush_mt_down(struct fallback_dispatch *dispatch,
 	if (seat_slot == -1)
 		return false;
 
-	seat->slot_map |= 1 << seat_slot;
+	seat->slot_map |= bit(seat_slot);
 	point = slot->point;
 	slot->hysteresis_center = point;
 	evdev_transform_absolute(device, &point);
@@ -374,7 +374,7 @@ fallback_flush_mt_up(struct fallback_dispatch *dispatch,
 	if (seat_slot == -1)
 		return false;
 
-	seat->slot_map &= ~(1 << seat_slot);
+	seat->slot_map &= ~bit(seat_slot);
 
 	touch_notify_touch_up(base, time, slot_idx, seat_slot);
 
@@ -402,7 +402,7 @@ fallback_flush_mt_cancel(struct fallback_dispatch *dispatch,
 	if (seat_slot == -1)
 		return false;
 
-	seat->slot_map &= ~(1 << seat_slot);
+	seat->slot_map &= ~bit(seat_slot);
 
 	touch_notify_touch_cancel(base, time, slot_idx, seat_slot);
 
@@ -434,7 +434,7 @@ fallback_flush_st_down(struct fallback_dispatch *dispatch,
 	if (seat_slot == -1)
 		return false;
 
-	seat->slot_map |= 1 << seat_slot;
+	seat->slot_map |= bit(seat_slot);
 
 	point = dispatch->abs.point;
 	evdev_transform_absolute(device, &point);
@@ -484,7 +484,7 @@ fallback_flush_st_up(struct fallback_dispatch *dispatch,
 	if (seat_slot == -1)
 		return false;
 
-	seat->slot_map &= ~(1 << seat_slot);
+	seat->slot_map &= ~bit(seat_slot);
 
 	touch_notify_touch_up(base, time, -1, seat_slot);
 
@@ -509,7 +509,7 @@ fallback_flush_st_cancel(struct fallback_dispatch *dispatch,
 	if (seat_slot == -1)
 		return false;
 
-	seat->slot_map &= ~(1 << seat_slot);
+	seat->slot_map &= ~bit(seat_slot);
 
 	touch_notify_touch_cancel(base, time, -1, seat_slot);
 
@@ -1382,8 +1382,8 @@ fallback_tablet_mode_switch_event(uint64_t time,
 }
 
 static void
-fallback_keyboard_pair_tablet_mode(struct evdev_device *keyboard,
-				   struct evdev_device *tablet_mode_switch)
+fallback_pair_tablet_mode(struct evdev_device *keyboard,
+			  struct evdev_device *tablet_mode_switch)
 {
 	struct fallback_dispatch *dispatch =
 		fallback_dispatch(keyboard->dispatch);
@@ -1391,8 +1391,12 @@ fallback_keyboard_pair_tablet_mode(struct evdev_device *keyboard,
 	if ((keyboard->tags & EVDEV_TAG_EXTERNAL_KEYBOARD))
 		return;
 
-	if ((keyboard->tags &
-	     (EVDEV_TAG_TRACKPOINT|EVDEV_TAG_INTERNAL_KEYBOARD)) == 0)
+	if ((keyboard->tags & EVDEV_TAG_TRACKPOINT)) {
+		if (keyboard->tags & EVDEV_TAG_EXTERNAL_MOUSE)
+			return;
+	/* This filters out all internal keyboard-like devices (Video
+	 * Switch) */
+	} else if ((keyboard->tags & EVDEV_TAG_INTERNAL_KEYBOARD) == 0)
 		return;
 
 	if (evdev_device_has_model_quirk(keyboard,
@@ -1406,7 +1410,7 @@ fallback_keyboard_pair_tablet_mode(struct evdev_device *keyboard,
 		return;
 
 	evdev_log_debug(keyboard,
-			"tablet_mode_switch: paired %s<->%s\n",
+			"tablet-mode: paired %s<->%s\n",
 			keyboard->devname,
 			tablet_mode_switch->devname);
 
@@ -1429,7 +1433,7 @@ fallback_interface_device_added(struct evdev_device *device,
 				struct evdev_device *added_device)
 {
 	fallback_lid_pair_keyboard(device, added_device);
-	fallback_keyboard_pair_tablet_mode(device, added_device);
+	fallback_pair_tablet_mode(device, added_device);
 }
 
 static void

@@ -27,6 +27,10 @@
 
 #include "config.h"
 
+#ifdef NDEBUG
+#warning "libinput relies on assert(). #defining NDEBUG is not recommended"
+#endif
+
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -628,6 +632,11 @@ strv_free(char **strv) {
 
 	free (strv);
 }
+
+struct key_value_str{
+	char *key;
+	char *value;
+};
 
 struct key_value_double {
 	double key;

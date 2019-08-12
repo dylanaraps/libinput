@@ -33,6 +33,11 @@
 #include <libwacom/libwacom.h>
 #endif
 
+enum notify {
+	DONT_NOTIFY,
+	DO_NOTIFY,
+};
+
 /* The tablet sends events every ~2ms , 50ms should be plenty enough to
    detect out-of-range.
    This value is higher during test suite runs */
@@ -234,7 +239,7 @@ tablet_process_absolute(struct tablet_dispatch *tablet,
 	/* tool_id is the identifier for the tool we can use in libwacom
 	 * to identify it (if we have one anyway) */
 	case ABS_MISC:
-		tablet->current_tool_id = e->value;
+		tablet->current_tool.id = e->value;
 		break;
 	/* Intuos 3 strip data. Should only happen on the Pad device, not on
 	   the Pen device. */
@@ -256,17 +261,57 @@ tablet_process_absolute(struct tablet_dispatch *tablet,
 }
 
 static void
-tablet_change_to_left_handed(struct evdev_device *device)
+tablet_apply_rotation(struct evdev_device *device)
 {
 	struct tablet_dispatch *tablet = tablet_dispatch(device->dispatch);
 
-	if (device->left_handed.enabled == device->left_handed.want_enabled)
+	if (tablet->rotation.rotate == tablet->rotation.want_rotate)
 		return;
 
 	if (!tablet_has_status(tablet, TABLET_TOOL_OUT_OF_PROXIMITY))
 		return;
 
+	tablet->rotation.rotate = tablet->rotation.want_rotate;
+
+	evdev_log_debug(device,
+			"tablet-rotation: rotation is %s\n",
+			tablet->rotation.rotate ? "on" : "off");
+}
+
+static void
+tablet_change_rotation(struct evdev_device *device, enum notify notify)
+{
+	struct tablet_dispatch *tablet = tablet_dispatch(device->dispatch);
+	struct evdev_device *touch_device = tablet->touch_device;
+	struct evdev_dispatch *dispatch;
+	bool tablet_is_left, touchpad_is_left;
+
+	tablet_is_left = tablet->device->left_handed.enabled;
+	touchpad_is_left = tablet->rotation.touch_device_left_handed_state;
+
+	tablet->rotation.want_rotate = tablet_is_left || touchpad_is_left;
+	tablet_apply_rotation(device);
+
+	if (notify == DO_NOTIFY && touch_device) {
+		bool enable = device->left_handed.want_enabled;
+
+		dispatch = touch_device->dispatch;
+		if (dispatch->interface->left_handed_toggle)
+			dispatch->interface->left_handed_toggle(dispatch,
+								touch_device,
+								enable);
+	}
+}
+
+static void
+tablet_change_to_left_handed(struct evdev_device *device)
+{
+	if (device->left_handed.enabled == device->left_handed.want_enabled)
+		return;
+
 	device->left_handed.enabled = device->left_handed.want_enabled;
+
+	tablet_change_rotation(device, DO_NOTIFY);
 }
 
 static void
@@ -278,7 +323,7 @@ tablet_update_tool(struct tablet_dispatch *tablet,
 	assert(tool != LIBINPUT_TOOL_NONE);
 
 	if (enabled) {
-		tablet->current_tool_type = tool;
+		tablet->current_tool.type = tool;
 		tablet_set_status(tablet, TABLET_TOOL_ENTERING_PROXIMITY);
 		tablet_unset_status(tablet, TABLET_TOOL_OUT_OF_PROXIMITY);
 	}
@@ -309,12 +354,32 @@ static inline double
 normalize_pressure(const struct input_absinfo *absinfo,
 		   struct libinput_tablet_tool *tool)
 {
-	double range = absinfo->maximum - absinfo->minimum;
-	int offset = tool->has_pressure_offset ?
-			tool->pressure_offset : 0;
-	double value = (absinfo->value - offset - absinfo->minimum) / range;
+	int offset;
+	double range;
+	double value;
 
-	return value;
+	/**
+	 * If the tool has a pressure offset, we use that as the lower bound
+	 * for the scaling range. If not, we use the upper threshold as the
+	 * lower bound, so once we get past that minimum physical pressure
+	 * we have logical 0 pressure.
+	 *
+	 * This means that there is a small range (lower-upper) where
+	 * different physical pressure (default: 1-5%) result in the same
+	 * logical pressure. This is, hopefully, not noticable.
+	 *
+	 * Note that that lower-upper range gives us a negative pressure, so
+	 * we have to clip to 0 for those.
+	 */
+
+	if (tool->has_pressure_offset)
+		offset = tool->pressure_offset;
+	else
+		offset = tool->pressure_threshold.upper;
+	range = absinfo->maximum - offset;
+	value = (absinfo->value - offset) / range;
+
+	return max(0.0, value);
 }
 
 static inline double
@@ -405,7 +470,7 @@ tablet_update_xy(struct tablet_dispatch *tablet,
 	    bit_is_set(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_Y)) {
 		absinfo = libevdev_get_abs_info(device->evdev, ABS_X);
 
-		if (device->left_handed.enabled)
+		if (tablet->rotation.rotate)
 			value = invert_axis(absinfo);
 		else
 			value = absinfo->value;
@@ -414,7 +479,7 @@ tablet_update_xy(struct tablet_dispatch *tablet,
 
 		absinfo = libevdev_get_abs_info(device->evdev, ABS_Y);
 
-		if (device->left_handed.enabled)
+		if (tablet->rotation.rotate)
 			value = invert_axis(absinfo);
 		else
 			value = absinfo->value;
@@ -566,8 +631,8 @@ tablet_update_rotation(struct tablet_dispatch *tablet,
 {
 	/* We must check ROTATION_Z after TILT_X/Y so that the tilt axes are
 	 * already normalized and set if we have the mouse/lens tool */
-	if (tablet->current_tool_type == LIBINPUT_TABLET_TOOL_TYPE_MOUSE ||
-	    tablet->current_tool_type == LIBINPUT_TABLET_TOOL_TYPE_LENS) {
+	if (tablet->current_tool.type == LIBINPUT_TABLET_TOOL_TYPE_MOUSE ||
+	    tablet->current_tool.type == LIBINPUT_TABLET_TOOL_TYPE_LENS) {
 		tablet_update_mouse_rotation(tablet, device);
 		clear_bit(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_TILT_X);
 		clear_bit(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_TILT_Y);
@@ -728,10 +793,10 @@ tablet_evcode_to_tool(int code)
 	switch (code) {
 	case BTN_TOOL_PEN:	type = LIBINPUT_TABLET_TOOL_TYPE_PEN;		break;
 	case BTN_TOOL_RUBBER:	type = LIBINPUT_TABLET_TOOL_TYPE_ERASER;	break;
-	case BTN_TOOL_BRUSH:	type = LIBINPUT_TABLET_TOOL_TYPE_BRUSH;	break;
+	case BTN_TOOL_BRUSH:	type = LIBINPUT_TABLET_TOOL_TYPE_BRUSH;		break;
 	case BTN_TOOL_PENCIL:	type = LIBINPUT_TABLET_TOOL_TYPE_PENCIL;	break;
 	case BTN_TOOL_AIRBRUSH:	type = LIBINPUT_TABLET_TOOL_TYPE_AIRBRUSH;	break;
-	case BTN_TOOL_MOUSE:	type = LIBINPUT_TABLET_TOOL_TYPE_MOUSE;	break;
+	case BTN_TOOL_MOUSE:	type = LIBINPUT_TABLET_TOOL_TYPE_MOUSE;		break;
 	case BTN_TOOL_LENS:	type = LIBINPUT_TABLET_TOOL_TYPE_LENS;		break;
 	default:
 		abort();
@@ -746,6 +811,8 @@ tablet_process_key(struct tablet_dispatch *tablet,
 		   struct input_event *e,
 		   uint64_t time)
 {
+	enum libinput_tablet_tool_type type;
+
 	switch (e->code) {
 	case BTN_TOOL_FINGER:
 		evdev_log_bug_libinput(device,
@@ -758,10 +825,12 @@ tablet_process_key(struct tablet_dispatch *tablet,
 	case BTN_TOOL_AIRBRUSH:
 	case BTN_TOOL_MOUSE:
 	case BTN_TOOL_LENS:
-		tablet_update_tool(tablet,
-				   device,
-				   tablet_evcode_to_tool(e->code),
-				   e->value);
+		type = tablet_evcode_to_tool(e->code);
+		tablet_set_status(tablet, TABLET_TOOL_UPDATED);
+		if (e->value)
+			tablet->tool_state |= bit(type);
+		else
+			tablet->tool_state &= ~bit(type);
 		break;
 	case BTN_TOUCH:
 		if (!bit_is_set(tablet->axis_caps,
@@ -819,7 +888,7 @@ tablet_process_misc(struct tablet_dispatch *tablet,
 	switch (e->code) {
 	case MSC_SERIAL:
 		if (e->value != -1)
-			tablet->current_tool_serial = e->value;
+			tablet->current_tool.serial = e->value;
 
 		break;
 	case MSC_SCAN:
@@ -865,15 +934,13 @@ tool_set_bits_from_libwacom(const struct tablet_dispatch *tablet,
 	WacomStylusType type;
 	WacomAxisTypeFlags axes;
 
-	db = libwacom_database_new();
-	if (!db) {
-		evdev_log_info(tablet->device,
-			       "Failed to initialize libwacom context.\n");
-		goto out;
-	}
+	db = tablet_libinput_context(tablet)->libwacom.db;
+	if (!db)
+		return rc;
+
 	s = libwacom_stylus_get_for_id(db, tool->tool_id);
 	if (!s)
-		goto out;
+		return rc;
 
 	type = libwacom_stylus_get_type(s);
 	if (type == WSTYLUS_PUCK) {
@@ -917,9 +984,6 @@ tool_set_bits_from_libwacom(const struct tablet_dispatch *tablet,
 		copy_axis_cap(tablet, tool, LIBINPUT_TABLET_TOOL_AXIS_PRESSURE);
 
 	rc = 0;
-out:
-	if (db)
-		libwacom_database_destroy(db);
 #endif
 	return rc;
 }
@@ -1192,8 +1256,8 @@ sanitize_mouse_lens_rotation(struct tablet_dispatch *tablet)
 {
 	/* If we have a mouse/lens cursor and the tilt changed, the rotation
 	   changed. Mark this, calculate the angle later */
-	if ((tablet->current_tool_type == LIBINPUT_TABLET_TOOL_TYPE_MOUSE ||
-	    tablet->current_tool_type == LIBINPUT_TABLET_TOOL_TYPE_LENS) &&
+	if ((tablet->current_tool.type == LIBINPUT_TABLET_TOOL_TYPE_MOUSE ||
+	    tablet->current_tool.type == LIBINPUT_TABLET_TOOL_TYPE_LENS) &&
 	    (bit_is_set(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_TILT_X) ||
 	     bit_is_set(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_TILT_Y)))
 		set_bit(tablet->changed_axes, LIBINPUT_TABLET_TOOL_AXIS_ROTATION_Z);
@@ -1225,15 +1289,20 @@ detect_pressure_offset(struct tablet_dispatch *tablet,
 	if (!pressure || !distance)
 		return;
 
-	offset = pressure->value - pressure->minimum;
+	offset = pressure->value;
 
+	/* If we have an event that falls below the current offset, adjust
+	 * the offset downwards. A fast contact can start with a
+	 * higher-than-needed pressure offset and then we'd be tied into a
+	 * high pressure offset for the rest of the session.
+	 */
 	if (tool->has_pressure_offset) {
 		if (offset < tool->pressure_offset)
 			tool->pressure_offset = offset;
 		return;
 	}
 
-	if (offset == 0)
+	if (offset <= pressure->minimum)
 		return;
 
 	/* we only set a pressure offset on proximity in */
@@ -1248,19 +1317,19 @@ detect_pressure_offset(struct tablet_dispatch *tablet,
 	if (offset > axis_range_percentage(pressure, 20)) {
 		evdev_log_error(device,
 			 "Ignoring pressure offset greater than 20%% detected on tool %s (serial %#x). "
-			 "See http://wayland.freedesktop.org/libinput/doc/%s/tablet-support.html\n",
+			 "See %stablet-support.html\n",
 			 tablet_tool_type_to_string(tool->type),
 			 tool->serial,
-			 LIBINPUT_VERSION);
+			 HTTP_DOC_LINK);
 		return;
 	}
 
 	evdev_log_info(device,
 		 "Pressure offset detected on tool %s (serial %#x).  "
-		 "See http://wayland.freedesktop.org/libinput/doc/%s/tablet-support.html\n",
+		 "See %stablet-support.html\n",
 		 tablet_tool_type_to_string(tool->type),
 		 tool->serial,
-		 LIBINPUT_VERSION);
+		 HTTP_DOC_LINK);
 	tool->pressure_offset = offset;
 	tool->has_pressure_offset = true;
 	tool->pressure_threshold.lower = pressure->minimum;
@@ -1630,8 +1699,114 @@ tablet_send_events(struct tablet_dispatch *tablet,
 
 	if (tablet_send_proximity_out(tablet, tool, device, &axes, time)) {
 		tablet_change_to_left_handed(device);
+		tablet_apply_rotation(device);
 		tablet_history_reset(tablet);
 	}
+}
+
+/**
+ * Handling for the proximity out workaround. Some tablets only send
+ * BTN_TOOL_PEN on the very first event, then leave it set even when the pen
+ * leaves the detectable range. To libinput this looks like we always have
+ * the pen in proximity.
+ *
+ * To avoid this, we set a timer on BTN_TOOL_PEN in. We expect the tablet to
+ * continuously send events, and while it's doing so we keep updating the
+ * timer. Once we go Xms without an event we assume proximity out and inject
+ * a BTN_TOOL_PEN event into the sequence through the timer func.
+ *
+ * We need to remember that we did that, on the first event after the
+ * timeout we need to emulate a BTN_TOOL_PEN event again to force proximity
+ * in.
+ *
+ * Other tools never send the BTN_TOOL_PEN event. For those tools, we
+ * piggyback along with the proximity out quirks by injecting
+ * the event during the first event frame.
+ */
+static inline void
+tablet_proximity_out_quirk_set_timer(struct tablet_dispatch *tablet,
+				     uint64_t time)
+{
+	if (tablet->quirks.need_to_force_prox_out)
+		libinput_timer_set(&tablet->quirks.prox_out_timer,
+				   time + FORCED_PROXOUT_TIMEOUT);
+}
+
+static void
+tablet_update_tool_state(struct tablet_dispatch *tablet,
+			 struct evdev_device *device,
+			 uint64_t time)
+{
+	enum libinput_tablet_tool_type type;
+	uint32_t changed;
+	int state;
+
+	/* We need to emulate a BTN_TOOL_PEN if we get an axis event (i.e.
+	 * stylus is def. in proximity) and:
+	 * - we forced a proximity out before, or
+	 * - on the very first event after init, because if we didn't get a
+	 *   BTN_TOOL_PEN and the state for the tool was 0, this device will
+	 *   never send the event.
+	 * We don't do this for pure button events because we discard those.
+	 *
+	 * But: on some devices the proximity out is delayed by the kernel,
+	 * so we get it after our forced prox-out has triggered. In that
+	 * case we need to just ignore the change.
+	 */
+	if (tablet_has_status(tablet, TABLET_AXES_UPDATED)) {
+		if (tablet->quirks.proximity_out_forced) {
+			if (!tablet_has_status(tablet, TABLET_TOOL_UPDATED) ||
+			    tablet->tool_state)
+				tablet->tool_state = bit(LIBINPUT_TABLET_TOOL_TYPE_PEN);
+			tablet->quirks.proximity_out_forced = false;
+		} else if (tablet->tool_state == 0 &&
+			    tablet->current_tool.type == LIBINPUT_TOOL_NONE) {
+			tablet->tool_state = bit(LIBINPUT_TABLET_TOOL_TYPE_PEN);
+			tablet->quirks.proximity_out_forced = false;
+		}
+	}
+
+	if (tablet->tool_state == tablet->prev_tool_state)
+		return;
+
+	/* Kernel tools are supposed to be mutually exclusive, if we have
+	 * two set discard the most recent one. */
+	if (tablet->tool_state & (tablet->tool_state - 1)) {
+		evdev_log_bug_kernel(device,
+				     "Multiple tools active simultaneously (%#x)\n",
+				     tablet->tool_state);
+		tablet->tool_state = tablet->prev_tool_state;
+		goto out;
+	}
+
+	changed = tablet->tool_state ^ tablet->prev_tool_state;
+	type = ffs(changed) - 1;
+	state = !!(tablet->tool_state & bit(type));
+
+	tablet_update_tool(tablet, device, type, state);
+
+	/* The proximity timeout is only needed for BTN_TOOL_PEN, devices
+	 * that require it don't do erasers */
+	if (type == LIBINPUT_TABLET_TOOL_TYPE_PEN) {
+		if (state) {
+			tablet_proximity_out_quirk_set_timer(tablet, time);
+		} else {
+			/* If we get a BTN_TOOL_PEN 0 when *not* injecting
+			 * events it means the tablet will give us the right
+			 * events after all and we can disable our
+			 * timer-based proximity out.
+			 *
+			 * We can't do so permanently though, some tablets
+			 * send the correct event sequence occasionally but
+			 * are broken otherwise.
+			 */
+			libinput_timer_cancel(&tablet->quirks.prox_out_timer);
+		}
+	}
+
+out:
+	tablet->prev_tool_state = tablet->tool_state;
+
 }
 
 static void
@@ -1641,13 +1816,14 @@ tablet_flush(struct tablet_dispatch *tablet,
 {
 	struct libinput_tablet_tool *tool;
 
-	if (tablet->current_tool_type == LIBINPUT_TOOL_NONE)
+	tablet_update_tool_state(tablet, device, time);
+	if (tablet->current_tool.type == LIBINPUT_TOOL_NONE)
 		return;
 
 	tool = tablet_get_tool(tablet,
-			       tablet->current_tool_type,
-			       tablet->current_tool_id,
-			       tablet->current_tool_serial);
+			       tablet->current_tool.type,
+			       tablet->current_tool.id,
+			       tablet->current_tool.serial);
 
 	if (!tool)
 		return; /* OOM */
@@ -1746,14 +1922,7 @@ tablet_reset_state(struct tablet_dispatch *tablet)
 	memcpy(&tablet->prev_button_state,
 	       &tablet->button_state,
 	       sizeof(tablet->button_state));
-}
-
-static inline void
-tablet_proximity_out_quirk_set_timer(struct tablet_dispatch *tablet,
-				     uint64_t time)
-{
-	libinput_timer_set(&tablet->quirks.prox_out_timer,
-			   time + FORCED_PROXOUT_TIMEOUT);
+	tablet_unset_status(tablet, TABLET_TOOL_UPDATED);
 }
 
 static void
@@ -1781,91 +1950,16 @@ tablet_proximity_out_quirk_timer_func(uint64_t now, void *data)
 		return;
 	}
 
-	tablet->quirks.proximity_out_in_progress = true;
+	evdev_log_debug(tablet->device, "tablet: forcing proximity after timeout\n");
+
 	ARRAY_FOR_EACH(events, e) {
 		tablet->base.interface->process(&tablet->base,
 						 tablet->device,
 						 e,
 						 now);
 	}
-	tablet->quirks.proximity_out_in_progress = false;
 
 	tablet->quirks.proximity_out_forced = true;
-}
-
-/**
- * Handling for the proximity out workaround. Some tablets only send
- * BTN_TOOL_PEN on the very first event, then leave it set even when the pen
- * leaves the detectable range. To libinput this looks like we always have
- * the pen in proximity.
- *
- * To avoid this, we set a timer on BTN_TOOL_PEN in. We expect the tablet to
- * continuously send events, and while it's doing so we keep updating the
- * timer. Once we go Xms without an event we assume proximity out and inject
- * a BTN_TOOL_PEN event into the sequence through the timer func.
- *
- * We need to remember that we did that, on the first event after the
- * timeout we need to inject a BTN_TOOL_PEN event again to force proximity
- * in.
- *
- * Other tools never send the BTN_TOOL_PEN event. For those tools, we
- * piggyback along with the proximity out quirks by injecting
- * the event during the first event frame.
- */
-static inline void
-tablet_proximity_quirk_update(struct tablet_dispatch *tablet,
-			      struct evdev_device *device,
-			      struct input_event *e,
-			      uint64_t time)
-{
-	/* LIBINPUT_TOOL_NONE can only happpen on the first event after
-	 * init. By pretending we forced a proximity out, we can inject a
-	 * BTN_TOOL_PEN and move on from there. */
-	if (e->type == EV_SYN &&
-	    tablet_has_status(tablet, TABLET_AXES_UPDATED) &&
-	    tablet->current_tool_type == LIBINPUT_TOOL_NONE) {
-		tablet->quirks.proximity_out_forced = true;
-		tablet->quirks.need_to_force_prox_out = true;
-	}
-
-	if (!tablet->quirks.need_to_force_prox_out)
-		return;
-
-	if (e->type == EV_SYN) {
-		/* If the timer function forced prox out before,
-		   fake a BTN_TOOL_PEN event */
-		if (tablet->quirks.proximity_out_forced) {
-			struct timeval tv = us2tv(time);
-			struct input_event fake_event = {
-				.input_event_sec = tv.tv_sec,
-				.input_event_usec = tv.tv_usec,
-				.type = EV_KEY,
-				.code = BTN_TOOL_PEN,
-				.value = 1,
-			};
-
-			tablet->base.interface->process(&tablet->base,
-							device,
-							&fake_event,
-							time);
-			tablet->quirks.proximity_out_forced = false;
-		}
-		tablet->quirks.last_event_time = time;
-	} else if (e->type == EV_KEY && e->code == BTN_TOOL_PEN) {
-		if (e->value) {
-			tablet_proximity_out_quirk_set_timer(tablet, time);
-		} else {
-			/* If we get a BTN_TOOL_PEN 0 when *not* injecting
-			 * events it means the tablet will give us the right
-			 * events after all and we can disable our
-			 * timer-based proximity out.
-			 */
-			if (!tablet->quirks.proximity_out_in_progress)
-				tablet->quirks.need_to_force_prox_out = false;
-
-			libinput_timer_cancel(&tablet->quirks.prox_out_timer);
-		}
-	}
 }
 
 static void
@@ -1875,9 +1969,6 @@ tablet_process(struct evdev_dispatch *dispatch,
 	       uint64_t time)
 {
 	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
-
-	/* Warning: this may inject events */
-	tablet_proximity_quirk_update(tablet, device, e, time);
 
 	switch (e->type) {
 	case EV_ABS:
@@ -1896,6 +1987,7 @@ tablet_process(struct evdev_dispatch *dispatch,
 		tablet_flush(tablet, device, time);
 		tablet_toggle_touch_device(tablet, device, time);
 		tablet_reset_state(tablet);
+		tablet->quirks.last_event_time = time;
 		break;
 	default:
 		evdev_log_error(device,
@@ -1930,6 +2022,7 @@ tablet_destroy(struct evdev_dispatch *dispatch)
 {
 	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
 	struct libinput_tablet_tool *tool, *tmp;
+	struct libinput *li = tablet_libinput_context(tablet);
 
 	libinput_timer_cancel(&tablet->quirks.prox_out_timer);
 	libinput_timer_destroy(&tablet->quirks.prox_out_timer);
@@ -1937,6 +2030,8 @@ tablet_destroy(struct evdev_dispatch *dispatch)
 	list_for_each_safe(tool, tmp, &tablet->tool_list, link) {
 		libinput_tablet_tool_unref(tool);
 	}
+
+	libinput_libwacom_unref(li);
 
 	free(tablet);
 }
@@ -1946,16 +2041,39 @@ tablet_device_added(struct evdev_device *device,
 		    struct evdev_device *added_device)
 {
 	struct tablet_dispatch *tablet = tablet_dispatch(device->dispatch);
+	bool is_touchscreen, is_ext_touchpad;
 
 	if (libinput_device_get_device_group(&device->base) !=
 	    libinput_device_get_device_group(&added_device->base))
 		return;
 
+	is_touchscreen = evdev_device_has_capability(added_device,
+						     LIBINPUT_DEVICE_CAP_TOUCH);
+	is_ext_touchpad = evdev_device_has_capability(added_device,
+						      LIBINPUT_DEVICE_CAP_POINTER) &&
+			  (added_device->tags & EVDEV_TAG_EXTERNAL_TOUCHPAD);
 	/* Touch screens or external touchpads only */
-	if (evdev_device_has_capability(added_device, LIBINPUT_DEVICE_CAP_TOUCH) ||
-	    (evdev_device_has_capability(added_device, LIBINPUT_DEVICE_CAP_POINTER) &&
-	     (added_device->tags & EVDEV_TAG_EXTERNAL_TOUCHPAD)))
-	    tablet->touch_device = added_device;
+	if (is_touchscreen || is_ext_touchpad) {
+		evdev_log_debug(device,
+				"touch-arbitration: activated for %s<->%s\n",
+				device->devname,
+				added_device->devname);
+		tablet->touch_device = added_device;
+	}
+
+	if (is_ext_touchpad) {
+		evdev_log_debug(device,
+				"tablet-rotation: %s will rotate %s\n",
+				device->devname,
+				added_device->devname);
+		tablet->rotation.touch_device = added_device;
+
+		if (libinput_device_config_left_handed_get(&added_device->base)) {
+			tablet->rotation.touch_device_left_handed_state = true;
+			tablet_change_rotation(device, DO_NOTIFY);
+		}
+	}
+
 }
 
 static void
@@ -1966,6 +2084,12 @@ tablet_device_removed(struct evdev_device *device,
 
 	if (tablet->touch_device == removed_device)
 		tablet->touch_device = NULL;
+
+	if (tablet->rotation.touch_device == removed_device) {
+		tablet->rotation.touch_device = NULL;
+		tablet->rotation.touch_device_left_handed_state = false;
+		tablet_change_rotation(device, DO_NOTIFY);
+	}
 }
 
 static void
@@ -1974,7 +2098,6 @@ tablet_check_initial_proximity(struct evdev_device *device,
 {
 	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
 	struct libinput *li = tablet_libinput_context(tablet);
-	bool tool_in_prox = false;
 	int code, state;
 	enum libinput_tablet_tool_type tool;
 
@@ -1988,19 +2111,19 @@ tablet_check_initial_proximity(struct evdev_device *device,
 						EV_KEY,
 						code,
 						&state) && state) {
-			tool_in_prox = true;
+			tablet->tool_state = bit(tool);
+			tablet->prev_tool_state = bit(tool);
 			break;
 		}
 	}
 
-	if (!tool_in_prox)
+	if (!tablet->tool_state)
 		return;
 
 	tablet_update_tool(tablet, device, tool, state);
-	if (tablet->quirks.need_to_force_prox_out)
-		tablet_proximity_out_quirk_set_timer(tablet, libinput_now(li));
+	tablet_proximity_out_quirk_set_timer(tablet, libinput_now(li));
 
-	tablet->current_tool_id =
+	tablet->current_tool.id =
 		libevdev_get_event_value(device->evdev,
 					 EV_ABS,
 					 ABS_MISC);
@@ -2009,7 +2132,31 @@ tablet_check_initial_proximity(struct evdev_device *device,
 	 * to 0 for now. On the first real event from the device we get the
 	 * serial (if any) and that event will be converted into a proximity
 	 * event */
-	tablet->current_tool_serial = 0;
+	tablet->current_tool.serial = 0;
+}
+
+/* Called when the touchpad toggles to left-handed */
+static void
+tablet_left_handed_toggled(struct evdev_dispatch *dispatch,
+			   struct evdev_device *device,
+			   bool left_handed_enabled)
+{
+	struct tablet_dispatch *tablet = tablet_dispatch(dispatch);
+
+	if (!tablet->rotation.touch_device)
+		return;
+
+	evdev_log_debug(device,
+			"tablet-rotation: touchpad is %s\n",
+			left_handed_enabled ? "left-handed" : "right-handed");
+
+	/* Our left-handed config is independent even though rotation is
+	 * locked. So we rotate when either device is left-handed. But it
+	 * can only be actually changed when the device is in a neutral
+	 * state, hence the want_rotate.
+	 */
+	tablet->rotation.touch_device_left_handed_state = left_handed_enabled;
+	tablet_change_rotation(device, DONT_NOTIFY);
 }
 
 static struct evdev_dispatch_interface tablet_interface = {
@@ -2025,6 +2172,7 @@ static struct evdev_dispatch_interface tablet_interface = {
 	.touch_arbitration_toggle = NULL,
 	.touch_arbitration_update_rect = NULL,
 	.get_switch_state = NULL,
+	.left_handed_toggle = tablet_left_handed_toggled,
 };
 
 static void
@@ -2114,8 +2262,8 @@ static void
 tablet_init_left_handed(struct evdev_device *device)
 {
 	if (evdev_tablet_has_left_handed(device))
-		    evdev_init_left_handed(device,
-					   tablet_change_to_left_handed);
+		evdev_init_left_handed(device,
+				       tablet_change_to_left_handed);
 }
 
 static bool
@@ -2150,14 +2298,13 @@ tablet_init(struct tablet_dispatch *tablet,
 {
 	struct libevdev *evdev = device->evdev;
 	enum libinput_tablet_tool_axis axis;
-	bool want_proximity_quirk = false;
 	int rc;
 
 	tablet->base.dispatch_type = DISPATCH_TABLET;
 	tablet->base.interface = &tablet_interface;
 	tablet->device = device;
 	tablet->status = TABLET_NONE;
-	tablet->current_tool_type = LIBINPUT_TOOL_NONE;
+	tablet->current_tool.type = LIBINPUT_TOOL_NONE;
 	list_init(&tablet->tool_list);
 
 	if (tablet_reject_device(device))
@@ -2165,7 +2312,6 @@ tablet_init(struct tablet_dispatch *tablet,
 
 	if (!libevdev_has_event_code(evdev, EV_KEY, BTN_TOOL_PEN)) {
 		libevdev_enable_event_code(evdev, EV_KEY, BTN_TOOL_PEN, NULL);
-		want_proximity_quirk = true;
 		tablet->quirks.proximity_out_forced = true;
 	}
 
@@ -2193,12 +2339,11 @@ tablet_init(struct tablet_dispatch *tablet,
 
 	tablet_set_status(tablet, TABLET_TOOL_OUT_OF_PROXIMITY);
 
-	if (evdev_device_has_model_quirk(device,
-					 QUIRK_MODEL_TABLET_NO_PROXIMITY_OUT))
-		want_proximity_quirk = true;
-
-	if (want_proximity_quirk)
-		tablet->quirks.need_to_force_prox_out = true;
+	/* We always enable the proximity out quirk, but disable it once a
+	   device gives us the right event sequence */
+	tablet->quirks.need_to_force_prox_out = true;
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_WACOM_ISDV4_PEN))
+		tablet->quirks.need_to_force_prox_out = false;
 
 	libinput_timer_init(&tablet->quirks.prox_out_timer,
 			    tablet_libinput_context(tablet),
@@ -2213,6 +2358,9 @@ struct evdev_dispatch *
 evdev_tablet_create(struct evdev_device *device)
 {
 	struct tablet_dispatch *tablet;
+	struct libinput *li = evdev_libinput_context(device);
+
+	libinput_libwacom_ref(li);
 
 	/* Stop false positives caused by the forced proximity code */
 	if (getenv("LIBINPUT_RUNNING_TEST_SUITE"))
