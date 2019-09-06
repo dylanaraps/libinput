@@ -1,5 +1,5 @@
 project('libinput', 'c',
-	version : '1.14.0',
+	version : '1.14.1',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
@@ -403,6 +403,10 @@ if get_option('documentation')
 	subdir('doc/api')
 	subdir('doc/user')
 endif
+
+############ shell completion #########
+
+subdir('completion/zsh')
 
 ############ tools ############
 libinput_tool_path = dir_libexec
