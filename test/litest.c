@@ -46,6 +46,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/sysinfo.h>
 #include <libudev.h>
 #if HAVE_LIBSYSTEMD
 #include <systemd/sd-bus.h>
@@ -73,7 +74,7 @@
 #define UDEV_DEVICE_GROUPS_FILE UDEV_RULES_D \
 	"/80-libinput-device-groups-litest-XXXXXX.rules"
 
-static int jobs = 8;
+static int jobs;
 static bool in_debugger = false;
 static bool verbose = false;
 static bool run_deviceless = false;
@@ -81,6 +82,7 @@ static bool use_system_rules_quirks = false;
 const char *filter_test = NULL;
 const char *filter_device = NULL;
 const char *filter_group = NULL;
+const char *xml_prefix = NULL;
 static struct quirks_context *quirks_context;
 
 struct created_file {
@@ -336,6 +338,7 @@ litest_add_tcase_no_device(struct suite *suite,
 	const char *test_name = funcname;
 
 	if (filter_device &&
+	    strstr(test_name, filter_device) == NULL &&
 	    fnmatch(filter_device, test_name, 0) != 0)
 		return;
 
@@ -361,6 +364,7 @@ litest_add_tcase_deviceless(struct suite *suite,
 	const char *test_name = funcname;
 
 	if (filter_device &&
+	    strstr(test_name, filter_device) == NULL &&
 	    fnmatch(filter_device, test_name, 0) != 0)
 		return;
 
@@ -430,10 +434,12 @@ litest_add_tcase(const char *suite_name,
 	litest_assert(excluded >= LITEST_DEVICELESS);
 
 	if (filter_test &&
+	    strstr(funcname, filter_test) == NULL &&
 	    fnmatch(filter_test, funcname, 0) != 0)
 		return;
 
 	if (filter_group &&
+	    strstr(suite_name, filter_group) == NULL &&
 	    fnmatch(filter_group, suite_name, 0) != 0)
 		return;
 
@@ -455,6 +461,7 @@ litest_add_tcase(const char *suite_name,
 				continue;
 
 			if (filter_device &&
+			    strstr(dev->shortname, filter_device) == NULL &&
 			    fnmatch(filter_device, dev->shortname, 0) != 0)
 				continue;
 			if ((dev->features & required) != required ||
@@ -476,6 +483,7 @@ litest_add_tcase(const char *suite_name,
 				continue;
 
 			if (filter_device &&
+			    strstr(dev->shortname, filter_device) == NULL &&
 			    fnmatch(filter_device, dev->shortname, 0) != 0)
 				continue;
 
@@ -579,16 +587,19 @@ _litest_add_ranged_for_device(const char *name,
 	litest_assert(type < LITEST_NO_DEVICE);
 
 	if (filter_test &&
+	    strstr(funcname, filter_test) == NULL &&
 	    fnmatch(filter_test, funcname, 0) != 0)
 		return;
 
 	if (filter_group &&
+	    strstr(name, filter_group) == NULL &&
 	    fnmatch(filter_group, name, 0) != 0)
 		return;
 
 	s = get_suite(name);
 	list_for_each(dev, &devices, node) {
 		if (filter_device &&
+		    strstr(dev->shortname, filter_device) == NULL &&
 		    fnmatch(filter_device, dev->shortname, 0) != 0) {
 			device_filtered = true;
 			continue;
@@ -821,6 +832,68 @@ quirk_log_handler(struct libinput *unused,
 	vfprintf(stderr, format, args);
 }
 
+static void
+litest_export_xml(SRunner *sr, const char *xml_prefix)
+{
+	TestResult **results;
+	int nresults, nfailed;
+	char *filename;
+	int fd;
+
+	/* This is the minimum-effort implementation here because its only
+	 * real purpose is to make test logs look pretty in the gitlab CI.
+	 *
+	 * Which means:
+	 * - there's no filename validation, if you supply a filename that
+	 *   mkstemps doesn't like, things go boom.
+	 * - every fork writes out a separate junit.xml file. gitlab is better
+	 *   at collecting lots of files than I am at writing code to collect
+	 *   this across forks to write out only one file.
+	 * - most of the content is pretty useless because libcheck only gives
+	 *   us minimal information. the libcheck XML file has more info like
+	 *   the duration of each test but it's more complicated to extract
+	 *   and we don't need it for now.
+	 */
+	filename = safe_strdup(xml_prefix);
+	fd = mkstemps(filename, 4);
+
+	results = srunner_results(sr);
+	nresults = srunner_ntests_run(sr);
+	nfailed = srunner_ntests_failed(sr);
+
+	dprintf(fd, "<?xml version=\"1.0\"?>\n");
+	dprintf(fd, "<testsuites id=\"%s\" tests=\"%d\" failures=\"%d\">\n",
+		filename,
+		nresults,
+		nfailed);
+	dprintf(fd, "  <testsuite>\n");
+	for (int i = 0; i < nresults; i++) {
+		TestResult *r = results[i];
+
+		dprintf(fd, "    <testcase id=\"%s\" name=\"%s\" %s>\n",
+			tr_tcname(r),
+			tr_tcname(r),
+			tr_rtype(r) == CK_PASS ? "/" : "");
+		if (tr_rtype(r) != CK_PASS) {
+			dprintf(fd, "      <failure message=\"%s:%d\">\n",
+				tr_lfile(r),
+				tr_lno(r));
+			dprintf(fd, "        %s:%d\n", tr_lfile(r), tr_lno(r));
+			dprintf(fd, "        %s\n", tr_tcname(r));
+			dprintf(fd, "\n");
+			dprintf(fd, "        %s\n", tr_msg(r));
+			dprintf(fd, "      </failure>\n");
+			dprintf(fd, "    </testcase>\n");
+		}
+	}
+	dprintf(fd, "  </testsuite>\n");
+	dprintf(fd, "</testsuites>\n");
+
+	free(results);
+	close(fd);
+	free(filename);
+}
+
 static int
 litest_run_suite(struct list *tests, int which, int max, int error_fd)
 {
@@ -918,6 +991,10 @@ litest_run_suite(struct list *tests, int which, int max, int error_fd)
 		goto out;
 
 	srunner_run_all(sr, CK_ENV);
+	if (xml_prefix)
+		litest_export_xml(sr, xml_prefix);
+
+
 	failed = srunner_ntests_failed(sr);
 	if (failed) {
 		TestResult **trs;
@@ -2496,6 +2573,27 @@ litest_button_scroll(struct litest_device *dev,
 }
 
 void
+litest_button_scroll_locked(struct litest_device *dev,
+			    unsigned int button,
+			    double dx, double dy)
+{
+	struct libinput *li = dev->libinput;
+
+	litest_button_click_debounced(dev, li, button, 1);
+	litest_button_click_debounced(dev, li, button, 0);
+
+	libinput_dispatch(li);
+	litest_timeout_buttonscroll();
+	libinput_dispatch(li);
+
+	litest_event(dev, EV_REL, REL_X, dx);
+	litest_event(dev, EV_REL, REL_Y, dy);
+	litest_event(dev, EV_SYN, SYN_REPORT, 0);
+
+	libinput_dispatch(li);
+}
+
+void
 litest_keyboard_key(struct litest_device *d, unsigned int key, bool is_press)
 {
 	struct input_event *ev;
@@ -2876,6 +2974,9 @@ litest_event_type_str(enum libinput_event_type type)
 		break;
 	case LIBINPUT_EVENT_TABLET_PAD_STRIP:
 		str = "TABLET PAD STRIP";
+		break;
+	case LIBINPUT_EVENT_TABLET_PAD_KEY:
+		str = "TABLET PAD KEY";
 		break;
 	case LIBINPUT_EVENT_SWITCH_TOGGLE:
 		str = "SWITCH TOGGLE";
@@ -3502,6 +3603,27 @@ litest_is_pad_strip_event(struct libinput_event *event,
 	return p;
 }
 
+struct libinput_event_tablet_pad *
+litest_is_pad_key_event(struct libinput_event *event,
+			unsigned int key,
+			enum libinput_key_state state)
+{
+	struct libinput_event_tablet_pad *p;
+	enum libinput_event_type type = LIBINPUT_EVENT_TABLET_PAD_KEY;
+
+	litest_assert(event != NULL);
+	litest_assert_event_type(event, type);
+
+	p = libinput_event_get_tablet_pad_event(event);
+	litest_assert(p != NULL);
+
+	litest_assert_int_eq(libinput_event_tablet_pad_get_key(p), key);
+	litest_assert_int_eq(libinput_event_tablet_pad_get_key_state(p),
+			     state);
+
+	return p;
+}
+
 struct libinput_event_switch *
 litest_is_switch_event(struct libinput_event *event,
 		       enum libinput_switch sw,
@@ -3533,6 +3655,21 @@ litest_assert_pad_button_event(struct libinput *li,
 	event = libinput_get_event(li);
 
 	pev = litest_is_pad_button_event(event, button, state);
+	libinput_event_destroy(libinput_event_tablet_pad_get_base_event(pev));
+}
+
+void
+litest_assert_pad_key_event(struct libinput *li,
+			    unsigned int key,
+			    enum libinput_key_state state)
+{
+	struct libinput_event *event;
+	struct libinput_event_tablet_pad *pev;
+
+	litest_wait_for_event(li);
+	event = libinput_get_event(li);
+
+	pev = litest_is_pad_key_event(event, key, state);
 	libinput_event_destroy(libinput_event_tablet_pad_get_base_event(pev));
 }
 
@@ -3598,6 +3735,26 @@ litest_assert_only_typed_events(struct libinput *li,
 
 	while (event) {
 		litest_assert_int_eq(libinput_event_get_type(event),
+                                     type);
+		libinput_event_destroy(event);
+		libinput_dispatch(li);
+		event = libinput_get_event(li);
+	}
+}
+
+void
+litest_assert_no_typed_events(struct libinput *li,
+			      enum libinput_event_type type)
+{
+	struct libinput_event *event;
+
+	litest_assert(type != LIBINPUT_EVENT_NONE);
+
+	libinput_dispatch(li);
+	event = libinput_get_event(li);
+
+	while (event) {
+		litest_assert_int_ne(libinput_event_get_type(event),
                                      type);
 		libinput_event_destroy(event);
 		libinput_dispatch(li);
@@ -3999,6 +4156,7 @@ litest_parse_argv(int argc, char **argv)
 		OPT_FILTER_DEVICE,
 		OPT_FILTER_GROUP,
 		OPT_FILTER_DEVICELESS,
+		OPT_XML_PREFIX,
 		OPT_JOBS,
 		OPT_LIST,
 		OPT_VERBOSE,
@@ -4008,6 +4166,7 @@ litest_parse_argv(int argc, char **argv)
 		{ "filter-device", 1, 0, OPT_FILTER_DEVICE },
 		{ "filter-group", 1, 0, OPT_FILTER_GROUP },
 		{ "filter-deviceless", 0, 0, OPT_FILTER_DEVICELESS },
+		{ "xml-output", 1, 0, OPT_XML_PREFIX },
 		{ "jobs", 1, 0, OPT_JOBS },
 		{ "list", 0, 0, OPT_LIST },
 		{ "verbose", 0, 0, OPT_VERBOSE },
@@ -4060,6 +4219,10 @@ litest_parse_argv(int argc, char **argv)
 			       "          Glob to filter on test groups\n"
 			       "    --filter-deviceless=.... \n"
 			       "          Glob to filter on tests that do not create test devices\n"
+			       "    --xml-output=/path/to/file-XXXXXXX.xml\n"
+			       "          Write test output in libcheck's XML format\n"
+			       "          to the given files. The file must match the format\n"
+			       "          prefix-XXXXXX.xml and only the prefix is your choice.\n"
 			       "    --verbose\n"
 			       "          Enable verbose output\n"
 			       "    --jobs 8\n"
@@ -4084,6 +4247,9 @@ litest_parse_argv(int argc, char **argv)
 			break;
 		case OPT_FILTER_GROUP:
 			filter_group = optarg;
+			break;
+		case OPT_XML_PREFIX:
+			xml_prefix = optarg;
 			break;
 		case 'j':
 		case OPT_JOBS:
@@ -4251,6 +4417,10 @@ main(int argc, char **argv)
 	in_debugger = is_debugger_attached();
 	if (in_debugger || RUNNING_ON_VALGRIND)
 		setenv("CK_FORK", "no", 0);
+
+	jobs = get_nprocs();
+	if (!RUNNING_ON_VALGRIND)
+		jobs *= 2;
 
 	mode = litest_parse_argv(argc, argv);
 	if (mode == LITEST_MODE_ERROR)

@@ -1,5 +1,5 @@
 project('libinput', 'c',
-	version : '1.14.1',
+	version : '1.15.0',
 	license : 'MIT/Expat',
 	default_options : [ 'c_std=gnu11', 'warning_level=2' ],
 	meson_version : '>= 0.41.0')
@@ -12,9 +12,9 @@ dir_libexec     = join_paths(get_option('prefix'), get_option('libexecdir'), 'li
 dir_lib         = join_paths(get_option('prefix'), get_option('libdir'))
 dir_man1        = join_paths(get_option('prefix'), get_option('mandir'), 'man1')
 dir_system_udev = join_paths(get_option('prefix'), 'lib', 'udev')
-dir_src_quirks  = join_paths(meson.source_root(), 'quirks')
-dir_src_test    = join_paths(meson.source_root(), 'test')
-dir_src         = join_paths(meson.source_root(), 'src')
+dir_src_quirks  = join_paths(meson.current_source_dir(), 'quirks')
+dir_src_test    = join_paths(meson.current_source_dir(), 'test')
+dir_src         = join_paths(meson.current_source_dir(), 'src')
 
 dir_udev = get_option('udev-dir')
 if dir_udev == ''
@@ -43,16 +43,25 @@ libinput_so_version = '@0@.@1@.@2@'.format((libinput_lt_c - libinput_lt_a),
 
 # Compiler setup
 cc = meson.get_compiler('c')
-cppflags = ['-Wno-unused-parameter', '-g', '-fvisibility=hidden']
+cppflags = ['-Wno-unused-parameter', '-fvisibility=hidden']
 cflags = cppflags + ['-Wmissing-prototypes', '-Wstrict-prototypes']
 add_project_arguments(cflags, language : 'c')
 add_project_arguments(cppflags, language : 'cpp')
 
 # config.h
 config_h = configuration_data()
+
+doc_url_base = 'https://wayland.freedesktop.org/libinput/doc'
+if libinput_version[2].to_int() >= 90
+	doc_url = '@0@/latest/'.format(doc_url_base)
+else
+	doc_url = '@0@/@1@/'.format(doc_url_base, meson.project_version())
+endif
+config_h.set_quoted('HTTP_DOC_LINK', doc_url)
+
 config_h.set('_GNU_SOURCE', '1')
 if get_option('buildtype') == 'debug' or get_option('buildtype') == 'debugoptimized'
-	config_h.set_quoted('MESON_BUILD_ROOT', meson.build_root())
+	config_h.set_quoted('MESON_BUILD_ROOT', meson.current_build_dir())
 else
 	config_h.set_quoted('MESON_BUILD_ROOT', '')
 endif
@@ -148,8 +157,16 @@ executable('libinput-device-group',
 	   include_directories : [includes_src, includes_include],
 	   install : true,
 	   install_dir : dir_udev_callouts)
-executable('libinput-fuzz-override',
-	   'udev/libinput-fuzz-override.c',
+executable('libinput-fuzz-extract',
+	   'udev/libinput-fuzz-extract.c',
+	   'src/util-strings.c',
+	   'src/util-prop-parsers.c',
+	   dependencies : [dep_udev, dep_libevdev, dep_lm],
+	   include_directories : [includes_src, includes_include],
+	   install : true,
+	   install_dir : dir_udev_callouts)
+executable('libinput-fuzz-to-zero',
+	   'udev/libinput-fuzz-to-zero.c',
 	   dependencies : [dep_udev, dep_libevdev],
 	   include_directories : [includes_src, includes_include],
 	   install : true,
@@ -167,7 +184,7 @@ configure_file(input : 'udev/90-libinput-fuzz-override.rules.in',
 	       configuration : udev_rules_config)
 
 litest_udev_rules_config = configuration_data()
-litest_udev_rules_config.set('UDEV_TEST_PATH', meson.build_root() + '/')
+litest_udev_rules_config.set('UDEV_TEST_PATH', meson.current_build_dir() + '/')
 litest_groups_rules_file = configure_file(input : 'udev/80-libinput-device-groups.rules.in',
 	       output : '80-libinput-device-groups-litest.rules',
 	       configuration : litest_udev_rules_config)
@@ -217,9 +234,46 @@ else
 endif
 
 ############ libinput-util.a ############
+
+# Basic compilation test to make sure the headers include and define all the
+# necessary bits.
+util_headers = [
+		'util-bits.h',
+		'util-input-event.h',
+		'util-list.h',
+		'util-macros.h',
+		'util-matrix.h',
+		'util-prop-parsers.h',
+		'util-ratelimit.h',
+		'util-strings.h',
+		'util-time.h',
+]
+foreach h: util_headers
+	c = configuration_data()
+	c.set_quoted('FILE', h)
+	testfile = configure_file(input : 'test/test-util-includes.c',
+			          output : 'test-util-includes-@0@.c'.format(h),
+				  configuration : c)
+	executable('test-build-@0@'.format(h),
+		   testfile, join_paths(dir_src, h),
+		   include_directories : [includes_src, includes_include],
+		   install : false)
+endforeach
+
 src_libinput_util = [
-		'src/libinput-util.c',
-		'src/libinput-util.h'
+	'src/util-bits.h',
+	'src/util-list.c',
+	'src/util-list.h',
+	'src/util-macros.h',
+	'src/util-matrix.h',
+	'src/util-ratelimit.c',
+	'src/util-ratelimit.h',
+	'src/util-strings.h',
+	'src/util-strings.c',
+	'src/util-time.h',
+	'src/util-prop-parsers.h',
+	'src/util-prop-parsers.c',
+	'src/libinput-util.h',
 ]
 libinput_util = static_library('libinput-util',
 			       src_libinput_util,
@@ -263,6 +317,7 @@ quirks_data = [
 	'quirks/30-vendor-ibm.quirks',
 	'quirks/30-vendor-kensington.quirks',
 	'quirks/30-vendor-logitech.quirks',
+	'quirks/30-vendor-madcatz.quirks',
 	'quirks/30-vendor-microsoft.quirks',
 	'quirks/30-vendor-razer.quirks',
 	'quirks/30-vendor-synaptics.quirks',
@@ -283,7 +338,7 @@ quirks_data = [
 
 test('quirks-in-meson.build',
      find_program('quirks/test-quirks-in-meson.build.sh'),
-     args : [meson.source_root()],
+     args : [meson.current_source_dir()],
      suite : ['all']
      )
 
@@ -427,7 +482,10 @@ man_config.set('LIBINPUT_VERSION', meson.project_version())
 man_config.set('LIBINPUT_DATA_DIR', dir_data)
 
 deps_tools = [ dep_tools_shared, dep_libinput ]
-libinput_debug_events_sources = [ 'tools/libinput-debug-events.c' ]
+libinput_debug_events_sources = [
+	'tools/libinput-debug-events.c',
+	libinput_version_h,
+]
 executable('libinput-debug-events',
 	   libinput_debug_events_sources,
 	   dependencies : deps_tools,
@@ -437,6 +495,20 @@ executable('libinput-debug-events',
 	   )
 configure_file(input : 'tools/libinput-debug-events.man',
 	       output : 'libinput-debug-events.1',
+	       configuration : man_config,
+	       install_dir : dir_man1,
+	       )
+
+libinput_debug_tablet_sources = [ 'tools/libinput-debug-tablet.c' ]
+executable('libinput-debug-tablet',
+	   libinput_debug_tablet_sources,
+	   dependencies : deps_tools,
+	   include_directories : [includes_src, includes_include],
+	   install_dir : libinput_tool_path,
+	   install : true)
+
+configure_file(input : 'tools/libinput-debug-tablet.man',
+	       output : 'libinput-debug-tablet.1',
 	       configuration : man_config,
 	       install_dir : dir_man1,
 	       )
@@ -639,7 +711,7 @@ test('tools-builddir-lookup',
 test('tools-builddir-lookup-installed',
      find_program('test/helper-copy-and-exec-from-tmp.sh'),
      args : [test_builddir_lookup.full_path(), '--builddir-is-null'],
-     env : ['LD_LIBRARY_PATH=@0@'.format(meson.build_root())],
+     env : ['LD_LIBRARY_PATH=@0@'.format(meson.current_build_dir())],
      suite : ['all'],
      workdir : '/tmp')
 
@@ -796,10 +868,10 @@ if get_option('tests')
 
 	litest_config_h = configuration_data()
 	litest_config_h.set_quoted('LIBINPUT_DEVICE_GROUPS_RULES_FILE',
-			    join_paths(meson.build_root(),
+			    join_paths(meson.current_build_dir(),
 				       '80-libinput-device-groups-litest.rules'))
 	litest_config_h.set_quoted('LIBINPUT_FUZZ_OVERRIDE_UDEV_RULES_FILE',
-			    join_paths(meson.build_root(),
+			    join_paths(meson.current_build_dir(),
 				       '90-libinput-fuzz-override-litest.rules'))
 
 	def_no_main = '-DLITEST_NO_MAIN'
@@ -835,7 +907,6 @@ if get_option('tests')
 
 	test_utils_sources = [
 		'src/libinput-util.h',
-		'src/libinput-util.c',
 		'test/test-utils.c',
 	]
 	test_utils = executable('test-utils',
@@ -849,7 +920,6 @@ if get_option('tests')
 
 	libinput_test_runner_sources = litest_sources + [
 		'src/libinput-util.h',
-		'src/libinput-util.c',
 		'test/test-udev.c',
 		'test/test-path.c',
 		'test/test-pointer.c',
@@ -894,7 +964,8 @@ if get_option('tests')
 		test('libinput-test-suite-@0@'.format(group),
 		     libinput_test_runner,
 		     suite : ['all', 'valgrind', 'root', 'hardware'],
-		     args : ['--filter-group=@0@:*'.format(group)],
+		     args : ['--filter-group=@0@:*'.format(group),
+			     '--xml-output=junit-@0@-XXXXXX.xml'.format(group)],
 		     is_parallel : false,
 		     timeout : 1200)
         endforeach
@@ -902,12 +973,12 @@ if get_option('tests')
 	test('libinput-test-deviceless',
 	     libinput_test_runner,
 	     suite : ['all', 'valgrind'],
-	     args: ['--filter-deviceless'])
+	     args: ['--filter-deviceless',
+	            '--xml-output=junit-deviceless-XXXXXX.xml'])
 
 	valgrind = find_program('valgrind', required : false)
 	if valgrind.found()
 		valgrind_env = environment()
-		valgrind_env.set('LITEST_JOBS', '4')
 		valgrind_suppressions_file = join_paths(dir_src_test, 'valgrind.suppressions')
 		add_test_setup('valgrind',
 				exe_wrapper : [ valgrind,

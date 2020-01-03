@@ -40,7 +40,6 @@
 #include <fcntl.h>
 #include <mtdev-plumbing.h>
 #include <assert.h>
-#include <time.h>
 #include <math.h>
 
 #include "libinput.h"
@@ -48,6 +47,7 @@
 #include "filter.h"
 #include "libinput-private.h"
 #include "quirks.h"
+#include "util-input-event.h"
 
 #if HAVE_LIBWACOM
 #include <libwacom/libwacom.h>
@@ -211,6 +211,34 @@ static void
 evdev_button_scroll_button(struct evdev_device *device,
 			   uint64_t time, int is_press)
 {
+	/* Where the button lock is enabled, we wrap the buttons into
+	   their own little state machine and filter out the events.
+	 */
+	switch (device->scroll.lock_state) {
+	case BUTTONSCROLL_LOCK_DISABLED:
+		break;
+	case BUTTONSCROLL_LOCK_IDLE:
+		assert(is_press);
+		device->scroll.lock_state = BUTTONSCROLL_LOCK_FIRSTDOWN;
+		evdev_log_debug(device, "scroll lock: first down\n");
+		break; /* handle event */
+	case BUTTONSCROLL_LOCK_FIRSTDOWN:
+		assert(!is_press);
+		device->scroll.lock_state = BUTTONSCROLL_LOCK_FIRSTUP;
+		evdev_log_debug(device, "scroll lock: first up\n");
+		return; /* filter release event */
+	case BUTTONSCROLL_LOCK_FIRSTUP:
+		assert(is_press);
+		device->scroll.lock_state = BUTTONSCROLL_LOCK_SECONDDOWN;
+		evdev_log_debug(device, "scroll lock: second down\n");
+		return; /* filter press event */
+	case BUTTONSCROLL_LOCK_SECONDDOWN:
+		assert(!is_press);
+		device->scroll.lock_state = BUTTONSCROLL_LOCK_IDLE;
+		evdev_log_debug(device, "scroll lock: idle\n");
+		break; /* handle event */
+	}
+
 	if (is_press) {
 		enum timer_flags flags = TIMER_FLAG_NONE;
 
@@ -368,6 +396,11 @@ evdev_notify_axis(struct evdev_device *device,
 {
 	struct normalized_coords delta = *delta_in;
 	struct discrete_coords discrete = *discrete_in;
+
+	if (device->scroll.invert_horizontal_scrolling) {
+		delta.x *= -1;
+		discrete.x *= -1;
+	}
 
 	if (device->scroll.natural_scrolling_enabled) {
 		delta.x *= -1;
@@ -713,6 +746,56 @@ evdev_scroll_get_default_button(struct libinput_device *device)
 	return 0;
 }
 
+static enum libinput_config_status
+evdev_scroll_set_button_lock(struct libinput_device *device,
+			     enum libinput_config_scroll_button_lock_state state)
+{
+	struct evdev_device *evdev = evdev_device(device);
+
+	switch (state) {
+	case LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED:
+		evdev->scroll.want_lock_enabled = false;
+		break;
+	case LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED:
+		evdev->scroll.want_lock_enabled = true;
+		break;
+	default:
+		return LIBINPUT_CONFIG_STATUS_INVALID;
+	}
+
+	evdev->scroll.change_scroll_method(evdev);
+
+	return LIBINPUT_CONFIG_STATUS_SUCCESS;
+}
+
+static enum libinput_config_scroll_button_lock_state
+evdev_scroll_get_button_lock(struct libinput_device *device)
+{
+	struct evdev_device *evdev = evdev_device(device);
+
+	if (evdev->scroll.lock_state == BUTTONSCROLL_LOCK_DISABLED)
+		return LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED;
+	else
+		return LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED;
+}
+
+static enum libinput_config_scroll_button_lock_state
+evdev_scroll_get_default_button_lock(struct libinput_device *device)
+{
+	return LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED;
+}
+
+
+void
+evdev_set_button_scroll_lock_enabled(struct evdev_device *device,
+				     bool enabled)
+{
+	if (enabled)
+		device->scroll.lock_state = BUTTONSCROLL_LOCK_IDLE;
+	else
+		device->scroll.lock_state = BUTTONSCROLL_LOCK_DISABLED;
+}
+
 void
 evdev_init_button_scroll(struct evdev_device *device,
 			 void (*change_scroll_method)(struct evdev_device *))
@@ -734,6 +817,9 @@ evdev_init_button_scroll(struct evdev_device *device,
 	device->scroll.config.set_button = evdev_scroll_set_button;
 	device->scroll.config.get_button = evdev_scroll_get_button;
 	device->scroll.config.get_default_button = evdev_scroll_get_default_button;
+	device->scroll.config.set_button_lock = evdev_scroll_set_button_lock;
+	device->scroll.config.get_button_lock = evdev_scroll_get_button_lock;
+	device->scroll.config.get_default_button_lock = evdev_scroll_get_default_button_lock;
 	device->base.config.scroll_method = &device->scroll.config;
 	device->scroll.method = evdev_scroll_get_default_method((struct libinput_device *)device);
 	device->scroll.want_method = device->scroll.method;
@@ -866,7 +952,7 @@ evdev_print_event(struct evdev_device *device,
 {
 	static uint32_t offset = 0;
 	static uint32_t last_time = 0;
-	uint32_t time = us2ms(tv2us(&e->time));
+	uint32_t time = us2ms(input_event_time(e));
 
 	if (offset == 0) {
 		offset = time;
@@ -898,7 +984,7 @@ static inline void
 evdev_process_event(struct evdev_device *device, struct input_event *e)
 {
 	struct evdev_dispatch *dispatch = device->dispatch;
-	uint64_t time = tv2us(&e->time);
+	uint64_t time = input_event_time(e);
 
 #if 0
 	evdev_print_event(device, e);
@@ -1888,6 +1974,10 @@ evdev_configure_device(struct evdev_device *device)
 		return NULL;
 	}
 
+	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_INVERT_HORIZONTAL_SCROLLING)) {
+		device->scroll.invert_horizontal_scrolling = true;
+	}
+
 	return fallback_dispatch_create(&device->base);
 }
 
@@ -2008,6 +2098,7 @@ evdev_pre_configure_model_quirks(struct evdev_device *device)
 	 * https://gitlab.freedesktop.org/libinput/libinput/issues/177 and
 	 * https://gitlab.freedesktop.org/libinput/libinput/issues/234 */
 	if (evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_T480S_TOUCHPAD) ||
+	    evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_T490S_TOUCHPAD) ||
 	    evdev_device_has_model_quirk(device, QUIRK_MODEL_LENOVO_L380_TOUCHPAD))
 		libevdev_enable_property(device->evdev,
 					 INPUT_PROP_BUTTONPAD);

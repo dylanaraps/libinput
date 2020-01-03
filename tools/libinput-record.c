@@ -39,13 +39,17 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include "libinput-versionsort.h"
-#include "libinput-util.h"
 #include "libinput-version.h"
 #include "libinput-git-version.h"
 #include "shared.h"
 #include "builddir.h"
+#include "util-list.h"
+#include "util-time.h"
+#include "util-input-event.h"
+#include "util-macros.h"
 
 static const int FILE_VERSION_NUMBER = 1;
 
@@ -196,8 +200,9 @@ print_evdev_event(struct record_context *ctx, struct input_event *ev)
 	const char *cname;
 	bool was_modified = false;
 	char desc[1024];
+	uint64_t time = input_event_time(ev) - ctx->offset;
 
-	ev->time = us2tv(tv2us(&ev->time) - ctx->offset);
+	input_event_set_time(ev, time);
 
 	/* Don't leak passwords unless the user wants to */
 	if (!ctx->show_keycodes)
@@ -215,7 +220,7 @@ print_evdev_event(struct record_context *ctx, struct input_event *ev)
 		static unsigned long last_ms = 0;
 		unsigned long time, dt;
 
-		time = us2ms(tv2us(&ev->time));
+		time = us2ms(input_event_time(ev));
 		dt = time - last_ms;
 		last_ms = time;
 
@@ -238,9 +243,9 @@ print_evdev_event(struct record_context *ctx, struct input_event *ev)
 	}
 
 	iprintf(ctx,
-		"- [%3lu, %6u, %3d, %3d, %6d] # %s\n",
-		ev->time.tv_sec,
-		(unsigned int)ev->time.tv_usec,
+		"- [%3lu, %6u, %3d, %3d, %7d] # %s\n",
+		ev->input_event_sec,
+		(unsigned int)ev->input_event_usec,
 		ev->type,
 		ev->code,
 		ev->value,
@@ -268,16 +273,18 @@ handle_evdev_frame(struct record_context *ctx, struct record_device *d)
 	while (libevdev_next_event(evdev,
 				   LIBEVDEV_READ_FLAG_NORMAL,
 				   &e) == LIBEVDEV_READ_STATUS_SUCCESS) {
+		uint64_t time;
 
 		if (ctx->offset == 0)
-			ctx->offset = tv2us(&e.time);
+			ctx->offset = input_event_time(&e);
 
 		if (d->nevents == d->events_sz)
 			resize(d->events, d->events_sz);
 
 		event = &d->events[d->nevents++];
 		event->type = EVDEV;
-		event->time = tv2us(&e.time) - ctx->offset;
+		time = input_event_time(&e);
+		input_event_set_time(&e, time - ctx->offset);
 		event->u.evdev = e;
 		count++;
 
@@ -2285,7 +2292,7 @@ init_libinput(struct record_context *ctx)
 static inline void
 usage(void)
 {
-	printf("Usage: %s [--help] [--multiple|--all] [--autorestart] [--output-file filename] [/dev/input/event0] [...]\n"
+	printf("Usage: %s [--help] [--all] [--autorestart] [--output-file filename] [/dev/input/event0] [...]\n"
 	       "Common use-cases:\n"
 	       "\n"
 	       " sudo %s -o recording.yml\n"
@@ -2296,7 +2303,7 @@ usage(void)
 	       "    As above, but restarts after 2s of inactivity on the device.\n"
 	       "    Note, the output file is only the prefix.\n"
 	       "\n"
-	       " sudo %s --multiple -o recording.yml /dev/input/event3 /dev/input/event4\n"
+	       " sudo %s -o recording.yml /dev/input/event3 /dev/input/event4\n"
 	       "    Records the two devices into the same recordings file.\n"
 	       "\n"
 	       "For more information, see the %s(1) man page\n",
@@ -2336,9 +2343,9 @@ main(int argc, char **argv)
 	};
 	struct record_device *d, *tmp;
 	const char *output_arg = NULL;
-	bool multiple = false, all = false, with_libinput = false;
+	bool all = false, with_libinput = false;
 	int ndevices;
-	int rc = 1;
+	int rc = EXIT_FAILURE;
 
 	list_init(&ctx.devices);
 
@@ -2354,12 +2361,13 @@ main(int argc, char **argv)
 		case 'h':
 		case OPT_HELP:
 			usage();
-			rc = 0;
+			rc = EXIT_SUCCESS;
 			goto out;
 		case OPT_AUTORESTART:
 			if (!safe_atoi(optarg, &ctx.timeout) ||
 			    ctx.timeout <= 0) {
 				usage();
+				rc = EXIT_INVALID_USAGE;
 				goto out;
 			}
 			ctx.timeout = ctx.timeout * 1000;
@@ -2371,8 +2379,7 @@ main(int argc, char **argv)
 		case OPT_KEYCODES:
 			ctx.show_keycodes = true;
 			break;
-		case OPT_MULTIPLE:
-			multiple = true;
+		case OPT_MULTIPLE: /* deprecated */
 			break;
 		case OPT_ALL:
 			all = true;
@@ -2380,13 +2387,11 @@ main(int argc, char **argv)
 		case OPT_LIBINPUT:
 			with_libinput = true;
 			break;
+		default:
+			usage();
+			rc = EXIT_INVALID_USAGE;
+			goto out;
 		}
-	}
-
-	if (all && multiple) {
-		fprintf(stderr,
-			"Only one of --multiple and --all allowed.\n");
-		goto out;
 	}
 
 	if (ctx.timeout > 0 && output_arg == NULL) {
@@ -2399,32 +2404,14 @@ main(int argc, char **argv)
 
 	ndevices = argc - optind;
 
-	if (multiple) {
-		if (output_arg == NULL) {
-			fprintf(stderr,
-				"Option --multiple requires --output-file\n");
-			goto out;
-		}
-
-		if (ndevices <= 1) {
-			fprintf(stderr,
-				"Option --multiple requires all device nodes on the commandline\n");
-			goto out;
-		}
-
-		for (int i = ndevices; i > 0; i -= 1) {
-			char *devnode = safe_strdup(argv[optind + i - 1]);
-
-			if (!init_device(&ctx, devnode))
-				goto out;
-		}
-	} else if (all) {
+	if (all) {
 		char **devices; /* NULL-terminated */
 		char **d;
 
 		if (output_arg == NULL) {
 			fprintf(stderr,
 				"Option --all requires --output-file\n");
+			rc = EXIT_INVALID_USAGE;
 			goto out;
 		}
 
@@ -2440,13 +2427,22 @@ main(int argc, char **argv)
 		}
 
 		strv_free(devices);
-	} else {
-		char *path;
-
-		if (ndevices > 1) {
-			fprintf(stderr, "More than one device, do you want --multiple?\n");
+	} else if (ndevices > 1) {
+		if (ndevices > 1 && output_arg == NULL) {
+			fprintf(stderr,
+				"Recording multiple devices requires --output-file\n");
+			rc = EXIT_INVALID_USAGE;
 			goto out;
 		}
+
+		for (int i = ndevices; i > 0; i -= 1) {
+			char *devnode = safe_strdup(argv[optind + i - 1]);
+
+			if (!init_device(&ctx, devnode))
+				goto out;
+		}
+	} else {
+		char *path;
 
 		path = ndevices <= 0 ? select_device() : safe_strdup(argv[optind++]);
 		if (path == NULL) {
