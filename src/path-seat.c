@@ -464,19 +464,11 @@ libinput_path_remove_device(struct libinput_device *device)
 	}
 
 	list_for_each(dev, &input->path_list, link) {
-#if HAVE_UDEV
-		if (dev->udev_device == evdev->udev_device) {
+		if (dev->udev_device == evdev->udev_device &&
+		    dev->devnode == evdev->devnode) {
 			path_device_destroy(dev);
 			break;
 		}
-#else
-		if (dev->devnode == evdev->devnode) {
-			list_remove(&dev->link);
-			free(dev->devnode);
-			free(dev);
-			break;
-		}
-#endif
 	}
 
 	seat = device->seat;
