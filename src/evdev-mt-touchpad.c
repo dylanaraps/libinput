@@ -2067,6 +2067,7 @@ tp_sync_touch(struct tp_dispatch *tp,
 	      int slot)
 {
 	struct libevdev *evdev = device->evdev;
+	int tracking_id;
 
 	if (!libevdev_fetch_slot_value(evdev,
 				       slot,
@@ -2095,6 +2096,13 @@ tp_sync_touch(struct tp_dispatch *tp,
 				  slot,
 				  ABS_MT_TOUCH_MINOR,
 				  &t->minor);
+
+	if (libevdev_fetch_slot_value(evdev,
+				      slot,
+				      ABS_MT_TRACKING_ID,
+				      &tracking_id) &&
+	    tracking_id != -1)
+		tp->nactive_slots++;
 }
 
 static void
